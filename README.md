@@ -138,9 +138,30 @@ The installer is built with the free [Inno Setup](https://jrsoftware.org/isinfo.
 
 It installs for the current user (no administrator rights needed), adds a
 Start menu shortcut, and offers to start the app with Windows and to add a
-desktop shortcut. It can be removed from **Settings → Apps**. When you
-release a new version, update `AppVersion` in the script to match
-`Cargo.toml`.
+desktop shortcut. It can be removed from **Settings → Apps**.
+
+### Releasing a new version
+
+Inno Setup does not change the version by itself. It is written by hand in
+two places, which must match:
+
+| File | Line |
+|---|---|
+| `Cargo.toml` | `version = "0.1.0"` |
+| `installer/chalkberry.iss` | `#define AppVersion "0.1.0"` |
+
+For each release:
+
+1. Pick the new number: the last part for fixes (`0.1.0` → `0.1.1`), the
+   middle one for new features (`0.1.1` → `0.2.0`).
+2. Change it in both files.
+3. Build the app and compile the installer (steps above). The setup file is
+   named after the version, e.g. `ChalkberrySetup-0.2.0.exe`.
+
+Running a newer setup upgrades the installed app in place: same folder, one
+entry in **Settings → Apps** showing the new version, and the user's
+settings kept. Inno Setup recognises the existing install by `AppId` in the
+script, so never change that line.
 
 ## Develop
 
