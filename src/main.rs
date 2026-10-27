@@ -12,6 +12,7 @@ mod callout_placement;
 mod chalk;
 mod command;
 mod config;
+mod cursors;
 mod input;
 mod overlay;
 mod renderer;

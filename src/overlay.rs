@@ -20,13 +20,13 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GetSystemMetrics,
-    GetWindowLongPtrW, IDC_CROSS, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostQuitMessage,
-    RegisterClassW, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SetLayeredWindowAttributes,
-    SetWindowLongPtrW, ShowWindow, WM_CAPTURECHANGED, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    GetWindowLongPtrW, LWA_ALPHA, MA_NOACTIVATE, PostQuitMessage, RegisterClassW, SM_CXSCREEN,
+    SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SW_SHOWNOACTIVATE, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow,
+    WM_CAPTURECHANGED, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{Result, w};
 
@@ -34,6 +34,7 @@ use crate::callout::{self, CalloutKind};
 use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
+use crate::cursors::Cursors;
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
 use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
@@ -86,6 +87,7 @@ pub fn create_overlay() -> Result<HWND> {
             renderer,
             tray_icon,
             toolbar,
+            cursors: Cursors::load(),
             pen: DEFAULT_PEN,
             drawn_strokes: Vec::new(),
             is_erasing: false,
@@ -118,8 +120,7 @@ fn create_overlay_window() -> Result<HWND> {
             lpfnWndProc: Some(window_proc),
             hInstance: instance.into(),
             lpszClassName: class_name,
-            // Shown only while Ctrl is held, as a hint that you can draw.
-            hCursor: LoadCursorW(None, IDC_CROSS)?,
+            // No class cursor: WM_SETCURSOR picks the drawing or eraser one.
             ..Default::default()
         };
         if RegisterClassW(&window_class) == 0 {
@@ -184,6 +185,8 @@ struct OverlayState {
     tray_icon: TrayIcon,
     /// The floating toolbar. Destroyed by Windows together with the overlay.
     toolbar: Toolbar,
+    /// The pen while drawing, the crosshair while erasing.
+    cursors: Cursors,
     /// The pen used for new strokes, as last picked in the tray menu.
     pen: PenSettings,
     /// Every finished stroke on screen, oldest first. Kept so a single
@@ -267,6 +270,9 @@ impl OverlayState {
             return; // already drawing with the left button
         }
         self.is_erasing = true;
+        // While the mouse is captured Windows sends no WM_SETCURSOR, so
+        // switch to the eraser cursor right away.
+        self.cursors.apply(true);
         // SAFETY: plain Win32 call on our own valid window. Capture keeps
         // mouse messages coming even if the cursor leaves the overlay.
         unsafe { SetCapture(self.window) };
@@ -279,6 +285,7 @@ impl OverlayState {
             return;
         }
         self.is_erasing = false;
+        self.cursors.apply(false);
         self.update_click_through();
         // SAFETY: plain Win32 call. It re-enters `window_proc` with
         // WM_CAPTURECHANGED, which then sees the state as busy and is ignored.
@@ -430,6 +437,13 @@ unsafe extern "system" fn window_proc(
         message if tray::is_taskbar_created(message) => with_state(|state| state.show_tray_icon()),
         // Clicking the overlay must never activate it or steal focus.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
+        // Windows asks which cursor to show; answering TRUE means "done".
+        WM_SETCURSOR => {
+            if with_state(|state| state.cursors.apply(state.is_erasing)).is_some() {
+                return LRESULT(1);
+            }
+            None
+        }
         WM_DESTROY => {
             OVERLAY_STATE.with(|cell| cell.borrow_mut().take());
             // SAFETY: plain Win32 call; ends the message loop.

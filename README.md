@@ -8,6 +8,11 @@ anything. Without Ctrl, the mouse works normally.
 |---|---|
 | Draw | Hold **Ctrl** + click / drag |
 | Erase a stroke | Hold **Ctrl** + right-click it (or right-drag across several) |
+
+While Ctrl is held the pointer turns into Windows' pen cursor, so you know
+you are drawing. While erasing it turns into a crosshair for aiming at the
+stroke to remove.
+
 | Clear drawings | **Ctrl + Alt + C** |
 | Quit | **Ctrl + Alt + Q** |
 | Change colour, thickness, opacity | Floating toolbar, or the chalkboard icon in the taskbar's notification area |
