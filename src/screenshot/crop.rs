@@ -64,12 +64,12 @@ pub fn crop_bgra(pixels: &[u8], width: u32, rect: PixelRect) -> Vec<u8> {
     cropped
 }
 
-/// "Pen Marker 2026-10-27 15-35-08.png". Colons are not allowed in Windows
+/// "Chalkberry 2026-10-27 15-35-08.png". Colons are not allowed in Windows
 /// file names, hence the dashes in the time.
 pub fn screenshot_file_name(date: (u16, u16, u16), time: (u16, u16, u16)) -> String {
     let (year, month, day) = date;
     let (hour, minute, second) = time;
-    format!("Pen Marker {year:04}-{month:02}-{day:02} {hour:02}-{minute:02}-{second:02}.png")
+    format!("Chalkberry {year:04}-{month:02}-{day:02} {hour:02}-{minute:02}-{second:02}.png")
 }
 
 /// Shortens a long path for display by replacing its middle with "…",
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn file_name_has_date_and_time_without_colons() {
         let name = screenshot_file_name((2026, 10, 27), (15, 5, 8));
-        assert_eq!(name, "Pen Marker 2026-10-27 15-05-08.png");
+        assert_eq!(name, "Chalkberry 2026-10-27 15-05-08.png");
         assert!(!name.contains(':'));
     }
 
@@ -257,11 +257,11 @@ mod tests {
 
     #[test]
     fn long_paths_keep_start_and_end() {
-        let path = r"C:\Users\someone\OneDrive\Documents\Pictures\Pen Marker";
+        let path = r"C:\Users\someone\OneDrive\Documents\Pictures\Chalkberry";
         let short = shorten_path(path, 30);
         assert_eq!(short.chars().count(), 30);
         assert!(short.starts_with(r"C:\Users"));
-        assert!(short.ends_with(r"\Pen Marker"));
+        assert!(short.ends_with(r"\Chalkberry"));
         assert!(short.contains('\u{2026}'));
     }
 

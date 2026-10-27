@@ -762,7 +762,7 @@ fn create_hint_format() -> Result<IDWriteTextFormat> {
 }
 
 fn create_toolbar_window(owner: HWND) -> Result<HWND> {
-    let class_name = w!("WindowsPenMarkerToolbar");
+    let class_name = w!("ChalkberryToolbar");
     // SAFETY: plain Win32 calls; `window_proc` matches WNDPROC and lives
     // for the whole program.
     unsafe {
@@ -783,7 +783,7 @@ fn create_toolbar_window(owner: HWND) -> Result<HWND> {
             // the app being drawn on. LAYERED: slightly see-through.
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
             class_name,
-            w!("Pen Marker toolbar"),
+            w!("Chalkberry toolbar"),
             WS_POPUP,
             0,
             0,
@@ -962,5 +962,5 @@ fn vector((x, y): (f32, f32)) -> Vector2 {
 }
 
 fn log_error(context: &str, error: &windows::core::Error) {
-    eprintln!("[pen-marker] error while {context}: {error}");
+    eprintln!("[chalkberry] error while {context}: {error}");
 }

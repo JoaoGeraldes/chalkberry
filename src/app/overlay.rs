@@ -48,14 +48,14 @@ use crate::settings::file::Settings;
 use crate::toolbar::window::{Toolbar, WM_TOOLBAR_COMMAND, WM_TOOLBAR_MOVED};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
 
-const READY_TITLE: &str = "Pen Marker is ready";
+const READY_TITLE: &str = "Chalkberry is ready";
 const READY_TEXT: &str =
     "Hold Ctrl and drag anywhere to draw. Your chalk settings are on this bar.";
 const READY_VISIBLE_MS: u32 = 5500;
 
-const STILL_RUNNING_TITLE: &str = "Pen Marker is still running";
+const STILL_RUNNING_TITLE: &str = "Chalkberry is still running";
 const STILL_RUNNING_TEXT: &str =
-    "The toolbar is hidden. Click the chalkboard icon here to bring it back.";
+    "The toolbar is hidden. Click the strawberry icon here to bring it back.";
 const STILL_RUNNING_VISIBLE_MS: u32 = 6500;
 
 const SCREENSHOT_SAVED_TITLE: &str = "Screenshot saved";
@@ -128,7 +128,7 @@ pub fn create_overlay() -> Result<HWND> {
 }
 
 fn create_overlay_window() -> Result<HWND> {
-    let class_name = w!("WindowsPenMarkerOverlay");
+    let class_name = w!("ChalkberryOverlay");
     let (left, top) = virtual_screen_origin();
     let (width, height) = virtual_screen_size();
 
@@ -159,7 +159,7 @@ fn create_overlay_window() -> Result<HWND> {
                 | WS_EX_TOOLWINDOW
                 | WS_EX_NOACTIVATE,
             class_name,
-            w!("Pen Marker"),
+            w!("Chalkberry"),
             WS_POPUP,
             left,
             top,
@@ -404,7 +404,7 @@ impl OverlayState {
     /// Failing to save is not worth interrupting the user: log it only.
     fn save_settings(&self) {
         if let Err(error) = self.settings.save() {
-            eprintln!("[pen-marker] error while saving settings: {error}");
+            eprintln!("[chalkberry] error while saving settings: {error}");
         }
     }
 
@@ -691,5 +691,5 @@ fn virtual_screen_size() -> (u32, u32) {
 /// Errors after startup are not fatal: report them and keep running.
 /// Visible in the console of debug builds.
 fn log_error(context: &str, error: &windows::core::Error) {
-    eprintln!("[pen-marker] error while {context}: {error}");
+    eprintln!("[chalkberry] error while {context}: {error}");
 }

@@ -1,13 +1,17 @@
 [package]
-name = "windows-pen-marker"
+name = "chalkberry"
 version = "0.1.0"
 edition = "2024"
-description = "Hold Ctrl and click/drag to draw on top of the Windows screen."
+description = "Chalkberry: hold Ctrl and click/drag to draw on top of the Windows screen."
 publish = false
 
 [dependencies]
 # Vector2 is the point type Direct2D uses; part of the same windows-rs family.
 windows-numerics = "0.3"
+
+[build-dependencies]
+# Build time only (not shipped): builds the app icon into the .exe.
+embed-resource = "3.0"
 
 [dependencies.windows]
 version = "0.62"

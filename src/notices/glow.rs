@@ -63,8 +63,8 @@ thread_local! {
 /// Creates the (hidden) glow window. `owner` keeps it above the overlay.
 pub fn create(owner: HWND) -> Result<()> {
     let window = composition_window::create_window(
-        w!("WindowsPenMarkerGlow"),
-        w!("Pen Marker glow"),
+        w!("ChalkberryGlow"),
+        w!("Chalkberry glow"),
         owner,
         Some(window_proc),
     )?;
@@ -82,7 +82,7 @@ pub fn create(owner: HWND) -> Result<()> {
 pub fn pulse_around(target: PixelRect, below: HWND, dpi: u32, color_rgb: [f32; 3]) {
     let started = with_state(|state| state.start(target, below, dpi, color_rgb));
     if let Some(Err(error)) = started {
-        eprintln!("[pen-marker] error while starting glow: {error}");
+        eprintln!("[chalkberry] error while starting glow: {error}");
     }
 }
 
@@ -158,7 +158,7 @@ impl GlowState {
             return self.stop();
         }
         if let Err(error) = self.draw() {
-            eprintln!("[pen-marker] error while drawing glow: {error}");
+            eprintln!("[chalkberry] error while drawing glow: {error}");
             self.stop();
         }
     }

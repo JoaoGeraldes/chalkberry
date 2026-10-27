@@ -1,4 +1,6 @@
-# Windows Pen Marker
+# Chalkberry
+
+![Chalkberry logo](assets/chalkberry-logo.svg)
 
 A tiny native Windows app for drawing on top of the screen. While it runs,
 **hold Ctrl and click or drag** to draw smooth, chalk-textured lines over
@@ -41,7 +43,7 @@ to the next strokes; lines already drawn keep their look.
 
 ### Tray icon
 
-The chalkboard icon in the taskbar's notification area opens a menu with
+The strawberry icon in the taskbar's notification area opens a menu with
 the same colour, thickness and opacity choices, **Show toolbar** (brings a
 hidden toolbar back), **Clear drawing** and **Quit**. If you cannot see it,
 it may be in the hidden-icons overflow (the **^** arrow); drag it onto the
@@ -57,14 +59,14 @@ without dragging to go back to the whole screen.
 The panel at the bottom glows briefly so you notice it. It shows
 **Saves to:** with the folder the PNG will go to. **Change folder…** picks
 another one (remembered for next time; the first default is
-`Pictures\Pen Marker`). **Save** (or Enter) saves, **Cancel** (or Esc)
+`Pictures\Chalkberry`). **Save** (or Enter) saves, **Cancel** (or Esc)
 discards. A bubble then shows the saved file's path.
 
 
 ### Settings
 
 Your choices are saved as soon as you make them, in
-`%APPDATA%\Pen Marker\settings.json`, and restored the next time the app
+`%APPDATA%\Chalkberry\settings.json`, and restored the next time the app
 starts: the pen colour, thickness and opacity, where the toolbar is and
 whether it is hidden, and the screenshot folder. The file is created with
 the defaults on the first start:
@@ -77,7 +79,7 @@ the defaults on the first start:
   "toolbar_x": 1104,
   "toolbar_y": 12,
   "toolbar_visible": true,
-  "screenshot_folder": "C:\\Users\\you\\Pictures\\Pen Marker"
+  "screenshot_folder": "C:\\Users\\you\\Pictures\\Chalkberry"
 }
 ```
 
@@ -102,9 +104,19 @@ cargo build --release    # optimized build, no console window
 ```
 
 The release build is a single, standalone file:
-`target\release\windows-pen-marker.exe`. It needs nothing else installed
+`target\release\chalkberry.exe`. It needs nothing else installed
 (the C runtime is linked in, see [`.cargo/config.toml`](.cargo/config.toml)),
 so you can copy it anywhere and double-click it.
+
+### App icon
+
+The logo is `assets/chalkberry-logo.svg`. Windows needs an `.ico` instead,
+so `assets/chalkberry.ico` is made from it, with the drawing cropped to fill
+the square and sizes 16, 20, 24, 32, 40, 48, 64 and 256 px inside.
+[`build.rs`](build.rs) builds that icon into the `.exe` (through
+`assets/chalkberry.rc`), so it shows in Explorer, on the taskbar, on
+shortcuts and in the tray. If the logo changes, make a new `.ico` with the
+same sizes from the SVG (e.g. with Inkscape or ImageMagick) and rebuild.
 
 ## Make an installer
 
@@ -112,17 +124,17 @@ The installer is built with the free [Inno Setup](https://jrsoftware.org/isinfo.
 
 1. Build the app: `cargo build --release`
 2. Compile the installer script, either by opening
-   [`installer/pen-marker.iss`](installer/pen-marker.iss) in Inno Setup and
+   [`installer/chalkberry.iss`](installer/chalkberry.iss) in Inno Setup and
    pressing **Compile**, or from the command line:
 
    ```powershell
-   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\pen-marker.iss
+   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\chalkberry.iss
    ```
 
    (Use `C:\Program Files (x86)\Inno Setup 6\ISCC.exe` if you installed
    Inno Setup for all users.)
 
-3. The installer is written to `installer\output\PenMarkerSetup-<version>.exe`.
+3. The installer is written to `installer\output\ChalkberrySetup-<version>.exe`.
 
 It installs for the current user (no administrator rights needed), adds a
 Start menu shortcut, and offers to start the app with Windows and to add a

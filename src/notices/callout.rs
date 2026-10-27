@@ -102,8 +102,8 @@ thread_local! {
 /// Creates the (hidden) bubble window. `owner` keeps it above the overlay.
 pub fn create(owner: HWND) -> Result<()> {
     let window = composition_window::create_window(
-        w!("WindowsPenMarkerCallout"),
-        w!("Pen Marker callout"),
+        w!("ChalkberryCallout"),
+        w!("Chalkberry callout"),
         owner,
         Some(window_proc),
     )?;
@@ -569,5 +569,5 @@ const fn gray(level: f32) -> D2D1_COLOR_F {
 }
 
 fn log_error(context: &str, error: &windows::core::Error) {
-    eprintln!("[pen-marker] error while {context}: {error}");
+    eprintln!("[chalkberry] error while {context}: {error}");
 }

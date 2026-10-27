@@ -1,11 +1,11 @@
-; Inno Setup script for Windows Pen Marker (https://jrsoftware.org/isinfo.php).
+; Inno Setup script for Chalkberry (https://jrsoftware.org/isinfo.php).
 ; Build the app first (cargo build --release), then compile this file with
 ; Inno Setup. The installer is written to installer\output\.
 
-#define AppName "Pen Marker"
+#define AppName "Chalkberry"
 ; Keep in step with `version` in Cargo.toml.
 #define AppVersion "0.1.0"
-#define AppExe "windows-pen-marker.exe"
+#define AppExe "chalkberry.exe"
 
 [Setup]
 AppId={{6E0B6C3A-2F5D-4B8E-9C1A-7D4E3F2A1B90}
@@ -20,8 +20,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.18362
 OutputDir=output
-OutputBaseFilename=PenMarkerSetup-{#AppVersion}
+OutputBaseFilename=ChalkberrySetup-{#AppVersion}
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\assets\chalkberry.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -43,4 +44,4 @@ Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait 
 
 [UninstallRun]
 ; Close the app first, so its file can be removed.
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden; RunOnceId: "StopPenMarker"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#AppExe}"; Flags: runhidden; RunOnceId: "StopChalkberry"

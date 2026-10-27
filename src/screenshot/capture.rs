@@ -34,7 +34,7 @@ use crate::screenshot::crop::screenshot_file_name;
 const BYTES_PER_PIXEL: u32 = 4;
 /// Screenshots go here (inside the user's Pictures folder) until the user
 /// picks another folder.
-const DEFAULT_FOLDER_NAME: &str = "Pen Marker";
+const DEFAULT_FOLDER_NAME: &str = "Chalkberry";
 
 /// A capture of every screen, as BGRA pixels (fully opaque), row by row.
 pub struct Screenshot {
@@ -166,7 +166,7 @@ pub fn new_file_path(folder: &Path) -> PathBuf {
 }
 
 /// Where screenshots go until the user picks another folder:
-/// `Pictures\Pen Marker`.
+/// `Pictures\Chalkberry`.
 pub fn default_folder() -> PathBuf {
     pictures_folder().join(DEFAULT_FOLDER_NAME)
 }
@@ -194,7 +194,7 @@ pub fn pick_folder(owner: HWND, current: &Path) -> Option<PathBuf> {
     match try_pick_folder(owner, current) {
         Ok(folder) => folder,
         Err(error) => {
-            eprintln!("[pen-marker] error while picking folder: {error}");
+            eprintln!("[chalkberry] error while picking folder: {error}");
             None
         }
     }

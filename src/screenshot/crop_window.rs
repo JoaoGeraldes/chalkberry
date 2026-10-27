@@ -649,7 +649,7 @@ fn main_screen_in_window(shot: &Screenshot) -> PixelRect {
 }
 
 fn create_crop_window(owner: HWND, shot: &Screenshot) -> Result<HWND> {
-    let class_name = w!("WindowsPenMarkerCrop");
+    let class_name = w!("ChalkberryCrop");
     // SAFETY: plain Win32 calls; `window_proc` matches WNDPROC and lives
     // for the whole program.
     unsafe {
@@ -672,7 +672,7 @@ fn create_crop_window(owner: HWND, shot: &Screenshot) -> Result<HWND> {
             // TOOLWINDOW: not in the taskbar or Alt+Tab.
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             class_name,
-            w!("Pen Marker screenshot"),
+            w!("Chalkberry screenshot"),
             WS_POPUP,
             shot.left,
             shot.top,
@@ -792,7 +792,7 @@ fn show_error(window: HWND, message: &str) {
     let text = HSTRING::from(message);
     // SAFETY: plain Win32 call with valid, null-terminated strings.
     unsafe {
-        MessageBoxW(Some(window), &text, w!("Pen Marker"), MB_OK | MB_ICONERROR);
+        MessageBoxW(Some(window), &text, w!("Chalkberry"), MB_OK | MB_ICONERROR);
     }
 }
 
@@ -838,7 +838,7 @@ const fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
 }
 
 fn log_error(context: &str, error: &windows::core::Error) {
-    eprintln!("[pen-marker] error while {context}: {error}");
+    eprintln!("[chalkberry] error while {context}: {error}");
 }
 
 #[cfg(test)]

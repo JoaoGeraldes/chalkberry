@@ -1,4 +1,4 @@
-//! Windows Pen Marker: hold Ctrl and click/drag to draw on top of the screen.
+//! Chalkberry: hold Ctrl and click/drag to draw on top of the screen.
 //!
 //! This file only wires the pieces together. See `CLAUDE.md` for the
 //! module map and code rules.
@@ -63,9 +63,9 @@ fn run_message_loop() {
 }
 
 fn show_startup_error(error: &windows::core::Error) {
-    let text = HSTRING::from(format!("Pen Marker could not start:\n\n{error}"));
+    let text = HSTRING::from(format!("Chalkberry could not start:\n\n{error}"));
     // SAFETY: plain Win32 call with valid, null-terminated strings.
     unsafe {
-        MessageBoxW(None, &text, w!("Pen Marker"), MB_OK | MB_ICONERROR);
+        MessageBoxW(None, &text, w!("Chalkberry"), MB_OK | MB_ICONERROR);
     }
 }

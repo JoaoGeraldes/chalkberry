@@ -1,5 +1,5 @@
 //! The user's settings (pen, toolbar place and visibility, screenshot
-//! folder), kept in `%APPDATA%\Pen Marker\settings.json` and saved after
+//! folder), kept in `%APPDATA%\Chalkberry\settings.json` and saved after
 //! every change.
 //!
 //! Only `std` file work: no Windows APIs (the caller passes in the default
@@ -15,7 +15,7 @@ use crate::settings::config::{
 };
 use crate::settings::json::{self, JsonValue};
 
-const SETTINGS_FOLDER_NAME: &str = "Pen Marker";
+const SETTINGS_FOLDER_NAME: &str = "Chalkberry";
 const SETTINGS_FILE_NAME: &str = "settings.json";
 /// Written first and then renamed over the settings file, so a crash in
 /// the middle of saving never leaves a half-written file.
@@ -62,7 +62,7 @@ impl Settings {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
             Err(error) => {
-                eprintln!("[pen-marker] error while reading settings: {error}");
+                eprintln!("[chalkberry] error while reading settings: {error}");
                 return Some(Self::defaults(default_screenshot_folder));
             }
         };
@@ -83,7 +83,7 @@ impl Settings {
     fn from_json(text: &str, default_screenshot_folder: PathBuf) -> Self {
         let defaults = Self::defaults(default_screenshot_folder);
         let Some(entries) = json::parse_flat_object(text) else {
-            eprintln!("[pen-marker] the settings file is not valid JSON; using defaults");
+            eprintln!("[chalkberry] the settings file is not valid JSON; using defaults");
             return defaults;
         };
         let entries = Entries(entries);

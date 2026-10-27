@@ -1,0 +1,4 @@
+// Windows resources built into chalkberry.exe (see build.rs).
+// The first icon is the one Explorer, the taskbar and shortcuts show;
+// the tray icon loads it by this id too (APP_ICON_RESOURCE_ID in tray.rs).
+1 ICON "chalkberry.ico"

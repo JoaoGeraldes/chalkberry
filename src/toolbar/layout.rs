@@ -171,7 +171,7 @@ fn button_tooltip(button: ToolbarButton) -> (&'static str, &'static str) {
         ),
         ToolbarButton::Hide => (
             "Hide toolbar",
-            "Pen Marker keeps running. Bring the toolbar back from the tray icon.",
+            "Chalkberry keeps running. Bring the toolbar back from the tray icon.",
         ),
     }
 }

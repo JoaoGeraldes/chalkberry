@@ -10,17 +10,17 @@
 use std::cell::Cell;
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
     Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-    GetSystemMetrics, HICON, HMENU, ICONINFO, MENU_ITEM_FLAGS, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MF_UNCHECKED, PostMessageW, RegisterWindowMessageW, SM_CXSMICON,
-    SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP,
-    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
+    AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetSystemMetrics, HICON,
+    HMENU, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MENU_ITEM_FLAGS, MF_CHECKED, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MF_UNCHECKED, PostMessageW, RegisterWindowMessageW, SM_CXSMICON,
+    SM_CYSMICON, SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -35,15 +35,11 @@ pub const WM_TRAY_ICON: u32 = WM_APP + 2;
 /// Identifies our icon among the overlay window's tray icons (it has one).
 const TRAY_ICON_ID: u32 = 1;
 
-const TOOLTIP: &str = "Pen Marker: hold Ctrl and drag to draw";
+const TOOLTIP: &str = "Chalkberry: hold Ctrl and drag to draw";
 
-/// Icon artwork proportions, relative to the icon size.
-const ICON_CORNER_RADIUS: f32 = 0.22;
-const ICON_STROKE_WIDTH: f32 = 0.16;
-const ICON_STROKE_START: (f32, f32) = (0.27, 0.73);
-const ICON_STROKE_END: (f32, f32) = (0.73, 0.27);
-const ICON_BOARD_RGB: [f32; 3] = [0.17, 0.31, 0.24];
-const ICON_CHALK_RGB: [f32; 3] = [0.97, 0.97, 0.93];
+/// The app icon's id in `assets/chalkberry.rc`, built into the .exe by
+/// `build.rs`.
+const APP_ICON_RESOURCE_ID: usize = 1;
 
 thread_local! {
     /// Explorer broadcasts this message when the taskbar is (re)created,
@@ -64,7 +60,7 @@ impl TrayIcon {
         // SAFETY: plain Win32 call with a valid, null-terminated string.
         let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
         TASKBAR_CREATED_MESSAGE.set(taskbar_created);
-        let icon = create_icon_image()?;
+        let icon = load_app_icon()?;
         Ok(Self { window, icon })
     }
 
@@ -154,7 +150,7 @@ pub fn show_menu(window: HWND, pen: &PenSettings, is_toolbar_visible: bool) -> O
     let menu = match build_menu(pen, is_toolbar_visible) {
         Ok(menu) => menu,
         Err(error) => {
-            eprintln!("[pen-marker] error while building tray menu: {error}");
+            eprintln!("[chalkberry] error while building tray menu: {error}");
             return None;
         }
     };
@@ -270,116 +266,32 @@ fn append_item(menu: HMENU, command: Command, label: &str, is_checked: bool) -> 
     unsafe { AppendMenuW(menu, MF_STRING | check_flag, command.id(), &label) }
 }
 
-/// Builds the tray icon from [`icon_pixels_bgra`], at the size Windows
-/// uses for small icons on this screen.
-fn create_icon_image() -> Result<HICON> {
-    // SAFETY: plain Win32 call with no pointers.
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.clamp(16, 64);
-    let color_pixels = icon_pixels_bgra(size as u32);
-    // The 1-bit mask is unused for 32-bit icons with alpha, but required.
-    // Its rows are padded to 16 bits.
-    let mask_row_bytes = (size as usize).div_ceil(16) * 2;
-    let mask_bits = vec![0u8; mask_row_bytes * size as usize];
-    // SAFETY: both pixel buffers have exactly the size the bitmaps need and
-    // outlive the calls. CreateIconIndirect copies the bitmaps, so ours are
-    // deleted right after.
+/// Loads the app icon built into the .exe, at the size Windows uses for
+/// small icons on this screen (picked from the sizes inside the .ico).
+fn load_app_icon() -> Result<HICON> {
+    // Windows names built-in resources by number by passing the number
+    // where a string pointer would go (MAKEINTRESOURCE).
+    let icon_name = PCWSTR(std::ptr::without_provenance(APP_ICON_RESOURCE_ID));
+    // SAFETY: plain Win32 calls. The module handle is our own .exe, which
+    // stays loaded; the returned icon is destroyed in `TrayIcon::drop`.
     unsafe {
-        let color_bitmap = CreateBitmap(size, size, 1, 32, Some(color_pixels.as_ptr().cast()));
-        let mask_bitmap = CreateBitmap(size, size, 1, 1, Some(mask_bits.as_ptr().cast()));
-        let icon_info = ICONINFO {
-            fIcon: true.into(),
-            xHotspot: 0,
-            yHotspot: 0,
-            hbmMask: mask_bitmap,
-            hbmColor: color_bitmap,
-        };
-        let icon = CreateIconIndirect(&icon_info);
-        let _ = DeleteObject(color_bitmap.into());
-        let _ = DeleteObject(mask_bitmap.into());
-        icon
+        let instance = GetModuleHandleW(None)?;
+        let (width, height) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        let icon = LoadImageW(
+            Some(instance.into()),
+            icon_name,
+            IMAGE_ICON,
+            width,
+            height,
+            LR_DEFAULTCOLOR,
+        )?;
+        Ok(HICON(icon.0))
     }
-}
-
-/// Draws the app icon, a little chalkboard with a chalk stroke across it,
-/// as `size` × `size` BGRA pixels with straight (not premultiplied) alpha.
-fn icon_pixels_bgra(size: u32) -> Vec<u8> {
-    let scale = size as f32;
-    let mut pixels = Vec::with_capacity((size * size * 4) as usize);
-    for row in 0..size {
-        for column in 0..size {
-            // Sample pixel centres, in 0..1 icon units.
-            let x = (column as f32 + 0.5) / scale;
-            let y = (row as f32 + 0.5) / scale;
-            // Signed distances in pixels; coverage fades over one pixel,
-            // which anti-aliases the edges.
-            let board_coverage = (0.5 - rounded_square_distance(x, y) * scale).clamp(0.0, 1.0);
-            let stroke_distance = segment_distance(x, y, ICON_STROKE_START, ICON_STROKE_END);
-            let chalk_coverage =
-                (0.5 + (ICON_STROKE_WIDTH / 2.0 - stroke_distance) * scale).clamp(0.0, 1.0);
-            let [red, green, blue] = [0, 1, 2].map(|channel| {
-                mix(
-                    ICON_BOARD_RGB[channel],
-                    ICON_CHALK_RGB[channel],
-                    chalk_coverage,
-                )
-            });
-            pixels.extend_from_slice(&[
-                unit_to_byte(blue),
-                unit_to_byte(green),
-                unit_to_byte(red),
-                unit_to_byte(board_coverage),
-            ]);
-        }
-    }
-    pixels
-}
-
-/// Signed distance from (`x`, `y`) to the edge of the icon's rounded square
-/// (which fills the whole 0..1 icon). Negative inside.
-fn rounded_square_distance(x: f32, y: f32) -> f32 {
-    let half_inner = 0.5 - ICON_CORNER_RADIUS;
-    let offset_x = ((x - 0.5).abs() - half_inner).max(0.0);
-    let offset_y = ((y - 0.5).abs() - half_inner).max(0.0);
-    offset_x.hypot(offset_y) - ICON_CORNER_RADIUS
-}
-
-/// Distance from (`x`, `y`) to the line segment from `start` to `end`.
-fn segment_distance(x: f32, y: f32, start: (f32, f32), end: (f32, f32)) -> f32 {
-    let (segment_x, segment_y) = (end.0 - start.0, end.1 - start.1);
-    let along = ((x - start.0) * segment_x + (y - start.1) * segment_y)
-        / (segment_x * segment_x + segment_y * segment_y);
-    let along = along.clamp(0.0, 1.0);
-    let closest_x = start.0 + segment_x * along;
-    let closest_y = start.1 + segment_y * along;
-    (x - closest_x).hypot(y - closest_y)
-}
-
-fn mix(from: f32, to: f32, amount: f32) -> f32 {
-    from + (to - from) * amount
-}
-
-fn unit_to_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn icon_corners_are_transparent_and_centre_is_chalk() {
-        let size = 32;
-        let pixels = icon_pixels_bgra(size);
-        let alpha_at = |x: u32, y: u32| pixels[((y * size + x) * 4 + 3) as usize];
-        let red_at = |x: u32, y: u32| pixels[((y * size + x) * 4 + 2) as usize];
-        assert_eq!(pixels.len(), (size * size * 4) as usize);
-        assert_eq!(alpha_at(0, 0), 0);
-        assert_eq!(alpha_at(size / 2, size / 2), 255);
-        assert!(
-            red_at(size / 2, size / 2) > 200,
-            "centre should be chalk white"
-        );
-    }
 
     #[test]
     fn long_text_is_cut_off_but_stays_zero_terminated() {
