@@ -6,7 +6,7 @@ Rust (edition 2024) + `windows` crate; Direct2D → DXGI swap chain → DirectCo
 **Modules** (one folder per feature; *pure* = never imports `windows`):
 
 - `main.rs` start-up + message loop · `tray.rs` tray icon + settings menu · `build.rs` builds the icon (`assets/chalkberry.rc` + `.ico`, made from `chalkberry-logo.svg`) into the .exe
-- `app/` the hub: `overlay` full-screen window, wires everything together · `command` user commands + ids (pure)
+- `app/` the hub: `overlay` full-screen window, wires everything together · `command` user commands + ids (pure) · `icon` loads the built-in app icon (tray, toolbar logo)
 - `drawing/` `stroke` model + smoothing (pure) · `chalk` grain texture (pure) · `renderer` GPU drawing · `input` Ctrl keyboard hook · `cursors` pen + crosshair cursors
 - `toolbar/` `window` floating toolbar window · `layout` layout, hit testing + tooltip texts (pure)
 - `screenshot/` `capture` screen capture, PNG saving, folder picker · `crop` crop box, file names, panel layout (pure) · `crop_window` crop screen

@@ -10,21 +10,20 @@
 use std::cell::Cell;
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
     Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, GetSystemMetrics, HICON,
-    HMENU, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MENU_ITEM_FLAGS, MF_CHECKED, MF_POPUP,
-    MF_SEPARATOR, MF_STRING, MF_UNCHECKED, PostMessageW, RegisterWindowMessageW, SM_CXSMICON,
-    SM_CYSMICON, SetForegroundWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
+    HMENU, MENU_ITEM_FLAGS, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
+    PostMessageW, RegisterWindowMessageW, SM_CXSMICON, SetForegroundWindow, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::app::command::Command;
+use crate::app::icon::load_app_icon;
 use crate::notices::placement::PixelRect;
 use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
 
@@ -36,10 +35,6 @@ pub const WM_TRAY_ICON: u32 = WM_APP + 2;
 const TRAY_ICON_ID: u32 = 1;
 
 const TOOLTIP: &str = "Chalkberry: hold Ctrl and drag to draw";
-
-/// The app icon's id in `assets/chalkberry.rc`, built into the .exe by
-/// `build.rs`.
-const APP_ICON_RESOURCE_ID: usize = 1;
 
 thread_local! {
     /// Explorer broadcasts this message when the taskbar is (re)created,
@@ -60,7 +55,9 @@ impl TrayIcon {
         // SAFETY: plain Win32 call with a valid, null-terminated string.
         let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
         TASKBAR_CREATED_MESSAGE.set(taskbar_created);
-        let icon = load_app_icon()?;
+        // SAFETY: plain Win32 call with no pointers.
+        let small_icon_size = unsafe { GetSystemMetrics(SM_CXSMICON) };
+        let icon = load_app_icon(small_icon_size)?;
         Ok(Self { window, icon })
     }
 
@@ -264,29 +261,6 @@ fn append_item(menu: HMENU, command: Command, label: &str, is_checked: bool) -> 
     let label = HSTRING::from(label);
     // SAFETY: plain Win32 call on a valid menu; the label is copied.
     unsafe { AppendMenuW(menu, MF_STRING | check_flag, command.id(), &label) }
-}
-
-/// Loads the app icon built into the .exe, at the size Windows uses for
-/// small icons on this screen (picked from the sizes inside the .ico).
-fn load_app_icon() -> Result<HICON> {
-    // Windows names built-in resources by number by passing the number
-    // where a string pointer would go (MAKEINTRESOURCE).
-    let icon_name = PCWSTR(std::ptr::without_provenance(APP_ICON_RESOURCE_ID));
-    // SAFETY: plain Win32 calls. The module handle is our own .exe, which
-    // stays loaded; the returned icon is destroyed in `TrayIcon::drop`.
-    unsafe {
-        let instance = GetModuleHandleW(None)?;
-        let (width, height) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
-        let icon = LoadImageW(
-            Some(instance.into()),
-            icon_name,
-            IMAGE_ICON,
-            width,
-            height,
-            LR_DEFAULTCOLOR,
-        )?;
-        Ok(HICON(icon.0))
-    }
 }
 
 #[cfg(test)]

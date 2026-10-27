@@ -13,11 +13,12 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINE_JOIN_ROUND,
-    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT,
-    D2D1_STROKE_STYLE_PROPERTIES, D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget,
-    ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
+    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
+    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINE_JOIN_ROUND, D2D1_PRESENT_OPTIONS_NONE,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
+    D2D1CreateFactory, ID2D1Bitmap, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+    ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -30,22 +31,29 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Gdi::{
     InvalidateRect, MONITOR_DEFAULTTONULL, MonitorFromPoint, ScreenToClient, ValidateRect,
 };
+use windows::Win32::Graphics::Imaging::{
+    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICImagingFactory,
+    WICBitmapDitherTypeNone, WICBitmapInterpolationModeHighQualityCubic,
+    WICBitmapPaletteTypeCustom,
+};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, GetWindowRect, HTCAPTION, HTCLIENT,
-    IDC_ARROW, IsWindowVisible, KillTimer, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostMessageW,
-    RegisterClassW, SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOZORDER, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, WM_APP,
-    WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_NCHITTEST, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyIcon, GetSystemMetrics, GetWindowRect, HICON,
+    HTCAPTION, HTCLIENT, IDC_ARROW, IsWindowVisible, KillTimer, LWA_ALPHA, LoadCursorW,
+    MA_NOACTIVATE, PostMessageW, RegisterClassW, SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SetLayeredWindowAttributes, SetTimer, SetWindowPos,
+    ShowWindow, WM_APP, WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONDOWN,
+    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Result, w};
 use windows_numerics::Vector2;
 
 use crate::app::command::Command;
+use crate::app::icon::load_app_icon;
 use crate::notices::callout::{self, CalloutKind};
 use crate::notices::placement::PixelRect;
 use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
@@ -73,6 +81,13 @@ const TOOLTIP_TIMER_ID: usize = 1;
 
 /// Windows' reference DPI: at 96 DPI one DIP is one pixel.
 const BASE_DPI: f32 = 96.0;
+/// The whole toolbar (and its tooltips) is drawn this much larger than
+/// Windows' own scaling, so its icons and text are easy to see.
+const TOOLBAR_ZOOM: f32 = 1.2;
+/// The largest image inside `assets/chalkberry.ico`. The logo is scaled
+/// down from it with a high-quality filter, rather than letting Windows
+/// stretch the nearest icon size (blurry at sizes the .ico lacks).
+const LOGO_SOURCE_SIZE_PX: i32 = 256;
 /// Whole-window opacity (0..=255). Slightly see-through keeps it discreet.
 const WINDOW_OPACITY: u8 = 235;
 /// Gap between the top of the primary screen and the toolbar at start.
@@ -133,7 +148,7 @@ impl Toolbar {
         let (width, height) = state.size_px();
         let start_top_left = saved_top_left
             .filter(|&(x, y)| is_on_a_screen(x + width / 2, y + height / 2))
-            .unwrap_or_else(|| default_top_left(width, state.dpi));
+            .unwrap_or_else(|| default_top_left(width, state.drawing_dpi));
         TOOLBAR_STATE.with(|cell| *cell.borrow_mut() = Some(state));
         with_state(|state| state.resize_window(Some(start_top_left)));
         Ok(Self { window })
@@ -185,10 +200,14 @@ impl Toolbar {
     }
 }
 
-/// Direct2D objects tied to the window. Recreated if the GPU is reset.
+/// Direct2D objects tied to the window. Recreated if the GPU is reset
+/// or the DPI changes.
 struct Graphics {
     target: ID2D1HwndRenderTarget,
     brush: ID2D1SolidColorBrush,
+    /// The Chalkberry logo at its exact pixel size. `None` if it could not
+    /// be loaded; the toolbar works without it.
+    logo: Option<ID2D1Bitmap>,
 }
 
 struct ToolbarState {
@@ -206,16 +225,18 @@ struct ToolbarState {
     hovered: Option<ToolbarHit>,
     is_tracking_mouse_leave: bool,
     pen: PenSettings,
-    dpi: f32,
+    /// The DPI the toolbar is drawn at: the monitor's DPI times
+    /// [`TOOLBAR_ZOOM`].
+    drawing_dpi: f32,
 }
 
 impl ToolbarState {
     fn new(window: HWND, owner: HWND, pen: PenSettings) -> Result<Self> {
         // SAFETY: plain Win32 and COM calls on our own valid window.
-        let (factory, icon_line_style, dpi) = unsafe {
+        let (factory, icon_line_style, monitor_dpi) = unsafe {
             let factory: ID2D1Factory = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let icon_line_style = factory.CreateStrokeStyle(&round_line_style(), None)?;
-            (factory, icon_line_style, GetDpiForWindow(window) as f32)
+            (factory, icon_line_style, GetDpiForWindow(window))
         };
         Ok(Self {
             window,
@@ -229,14 +250,14 @@ impl ToolbarState {
             hovered: None,
             is_tracking_mouse_leave: false,
             pen,
-            dpi,
+            drawing_dpi: zoomed_dpi(monitor_dpi),
         })
     }
 
     /// The toolbar size in physical pixels at the current DPI.
     fn size_px(&self) -> (i32, i32) {
         let (width, height) = self.layout.size();
-        let scale = self.dpi / BASE_DPI;
+        let scale = self.drawing_dpi / BASE_DPI;
         (
             (width * scale).ceil() as i32,
             (height * scale).ceil() as i32,
@@ -245,7 +266,7 @@ impl ToolbarState {
 
     /// Converts a point in window pixels to layout DIPs.
     fn to_dips(&self, x_px: i32, y_px: i32) -> (f32, f32) {
-        let scale = BASE_DPI / self.dpi;
+        let scale = BASE_DPI / self.drawing_dpi;
         (x_px as f32 * scale, y_px as f32 * scale)
     }
 
@@ -396,7 +417,7 @@ impl ToolbarState {
         let text = tooltip_text(hit, self.layout.open_picker);
         if let (Some(rect), Some(text)) = (rect, text) {
             let target = self.to_screen(rect);
-            let dpi = self.dpi as u32;
+            let dpi = self.drawing_dpi as u32;
             callout::show(text.title, text.body, target, dpi, CalloutKind::Tooltip);
         }
     }
@@ -415,7 +436,7 @@ impl ToolbarState {
     /// Converts a layout rectangle (DIPs) to screen pixels.
     fn to_screen(&self, rect: Rect) -> PixelRect {
         let origin = window_screen_rect(self.window);
-        let scale = self.dpi / BASE_DPI;
+        let scale = self.drawing_dpi / BASE_DPI;
         let to_px = |dips: f32| (dips * scale).round() as i32;
         PixelRect {
             left: origin.left + to_px(rect.left),
@@ -467,11 +488,9 @@ impl ToolbarState {
 
     /// The toolbar moved to a monitor with a different scaling.
     fn on_dpi_changed(&mut self, new_dpi: u32, suggested_rect: &RECT) {
-        self.dpi = new_dpi as f32;
-        if let Some(graphics) = &self.graphics {
-            // SAFETY: plain COM call.
-            unsafe { graphics.target.SetDpi(self.dpi, self.dpi) };
-        }
+        self.drawing_dpi = zoomed_dpi(new_dpi);
+        // Recreated on the next paint, with the logo at its new pixel size.
+        self.graphics = None;
         self.resize_window(Some((suggested_rect.left, suggested_rect.top)));
     }
 
@@ -506,8 +525,8 @@ impl ToolbarState {
     fn create_graphics(&self) -> Result<Graphics> {
         let (width, height) = self.size_px();
         let target_properties = D2D1_RENDER_TARGET_PROPERTIES {
-            dpiX: self.dpi,
-            dpiY: self.dpi,
+            dpiX: self.drawing_dpi,
+            dpiY: self.drawing_dpi,
             ..Default::default()
         };
         let window_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
@@ -524,7 +543,49 @@ impl ToolbarState {
                 .factory
                 .CreateHwndRenderTarget(&target_properties, &window_properties)?;
             let brush = target.CreateSolidColorBrush(&ICON_COLOR, None)?;
-            Ok(Graphics { target, brush })
+            let logo = self.create_logo_bitmap(&target);
+            Ok(Graphics {
+                target,
+                brush,
+                logo,
+            })
+        }
+    }
+
+    /// The app icon as a bitmap exactly as many pixels wide as the logo
+    /// is drawn (see [`Self::snap_to_pixels`]), so it maps 1:1 to the
+    /// screen. Logs and returns `None` on failure.
+    fn create_logo_bitmap(&self, target: &ID2D1HwndRenderTarget) -> Option<ID2D1Bitmap> {
+        let logo_width = self.layout.logo_rect().width();
+        let size_px = (logo_width * self.drawing_dpi / BASE_DPI).round() as u32;
+        let icon = match load_app_icon(LOGO_SOURCE_SIZE_PX) {
+            Ok(icon) => icon,
+            Err(error) => {
+                log_error("loading toolbar logo", &error);
+                return None;
+            }
+        };
+        let bitmap = icon_to_bitmap(target, icon, size_px);
+        // SAFETY: the icon was loaded above and is no longer used.
+        let _ = unsafe { DestroyIcon(icon) };
+        bitmap
+            .inspect_err(|error| log_error("converting toolbar logo", error))
+            .ok()
+    }
+
+    /// `rect` moved and sized to whole screen pixels. The zoom puts layout
+    /// edges between pixels (e.g. 8.4 px), and a bitmap drawn there is
+    /// smeared across them; on whole pixels it stays sharp.
+    fn snap_to_pixels(&self, rect: Rect) -> Rect {
+        let scale = self.drawing_dpi / BASE_DPI;
+        let snap = |dips: f32| (dips * scale).round() / scale;
+        let left = snap(rect.left);
+        let top = snap(rect.top);
+        Rect {
+            left,
+            top,
+            right: left + snap(rect.right - rect.left),
+            bottom: top + snap(rect.bottom - rect.top),
         }
     }
 
@@ -536,6 +597,9 @@ impl ToolbarState {
         };
         // SAFETY: plain COM call between BeginDraw and EndDraw.
         unsafe { graphics.target.Clear(Some(&BACKGROUND_COLOR)) };
+        if let Some(logo) = &graphics.logo {
+            painter.image(logo, self.snap_to_pixels(self.layout.logo_rect()));
+        }
         draw_grip(&painter, self.layout.grip_rect());
         for button in ToolbarButton::ALL {
             let rect = self.layout.button_rect(button);
@@ -678,6 +742,21 @@ impl Painter<'_> {
                 &self.graphics.brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
                 DWRITE_MEASURING_MODE_NATURAL,
+            )
+        };
+    }
+
+    fn image(&self, bitmap: &ID2D1Bitmap, rect: Rect) {
+        let destination = to_d2d_rect(rect);
+        // SAFETY: plain COM call between BeginDraw and EndDraw;
+        // `destination` outlives it.
+        unsafe {
+            self.graphics.target.DrawBitmap(
+                bitmap,
+                Some(std::ptr::from_ref(&destination)),
+                1.0,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                None,
             )
         };
     }
@@ -859,6 +938,46 @@ unsafe extern "system" fn window_proc(
         Some(result) => result,
         // SAFETY: forwarding the unchanged arguments to the default handler.
         None => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// The DPI to draw at on a monitor at `monitor_dpi`.
+fn zoomed_dpi(monitor_dpi: u32) -> f32 {
+    monitor_dpi as f32 * TOOLBAR_ZOOM
+}
+
+/// Copies an icon (with its transparency) into a `size_px` × `size_px`
+/// Direct2D bitmap for `target`, through WIC.
+fn icon_to_bitmap(
+    target: &ID2D1HwndRenderTarget,
+    icon: HICON,
+    size_px: u32,
+) -> Result<ID2D1Bitmap> {
+    // SAFETY: plain COM calls on objects created here; `icon` is valid for
+    // the duration of the call (the caller destroys it afterwards).
+    unsafe {
+        let imaging: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+        let icon_bitmap = imaging.CreateBitmapFromHICON(icon)?;
+        // Premultiplied alpha first: Direct2D wants it, and scaling in it
+        // keeps edges clean (no dark fringe from transparent pixels).
+        let converter = imaging.CreateFormatConverter()?;
+        converter.Initialize(
+            &icon_bitmap,
+            &GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            None,
+            0.0,
+            WICBitmapPaletteTypeCustom,
+        )?;
+        let scaler = imaging.CreateBitmapScaler()?;
+        scaler.Initialize(
+            &converter,
+            size_px,
+            size_px,
+            WICBitmapInterpolationModeHighQualityCubic,
+        )?;
+        target.CreateBitmapFromWicBitmap(&scaler, None)
     }
 }
 

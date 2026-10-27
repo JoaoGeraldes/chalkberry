@@ -5,23 +5,28 @@
 //! in device-independent pixels (DIPs); the toolbar window scales them to
 //! the monitor's DPI.
 //!
-//! Layout: a main row with a drag grip and the buttons; while a picker is
-//! open, a row with that picker's choices; and at the bottom a small
-//! two-line hint on how to draw and erase.
+//! Layout: a main row with the logo, a drag grip and the buttons; while a
+//! picker is open, a row with that picker's choices; and at the bottom a
+//! small two-line hint on how to draw and erase.
 
 use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, WIDTH_CHOICES};
 
 /// Space between the toolbar's edge and its contents.
-const PADDING: f32 = 5.0;
-/// Width of the dotted grip on the left that hints "drag me".
+const PADDING: f32 = 7.0;
+/// The Chalkberry logo at the far left (square).
+const LOGO_SIZE: f32 = 20.0;
+/// Space between the logo and the grip.
+const LOGO_GAP: f32 = 4.0;
+/// Width of the dotted grip that hints "drag me".
 const GRIP_WIDTH: f32 = 12.0;
 const BUTTON_SIZE: f32 = 30.0;
-const BUTTON_GAP: f32 = 2.0;
+/// Room between buttons, so each is an easy, separate target.
+const BUTTON_GAP: f32 = 6.0;
 /// Extra space separating the pen buttons from the clear/hide buttons.
-const GROUP_GAP: f32 = 8.0;
-const ROW_GAP: f32 = 4.0;
+const GROUP_GAP: f32 = 12.0;
+const ROW_GAP: f32 = 6.0;
 const CHOICE_SIZE: f32 = 26.0;
-const CHOICE_GAP: f32 = 2.0;
+const CHOICE_GAP: f32 = 6.0;
 /// Room for the two lines of hint text.
 const HINT_HEIGHT: f32 = 28.0;
 const HINT_BOTTOM_PADDING: f32 = 4.0;
@@ -215,13 +220,21 @@ impl ToolbarLayout {
         }
     }
 
-    /// The dotted drag grip at the left of the main row.
+    /// The logo at the far left of the main row, centred on the buttons.
+    /// It is background: dragging it moves the toolbar.
+    pub fn logo_rect(&self) -> Rect {
+        let top = PADDING + (BUTTON_SIZE - LOGO_SIZE) / 2.0;
+        Rect::from_size(PADDING, top, LOGO_SIZE, LOGO_SIZE)
+    }
+
+    /// The dotted drag grip, between the logo and the buttons.
     pub fn grip_rect(&self) -> Rect {
-        Rect::from_size(PADDING, PADDING, GRIP_WIDTH, BUTTON_SIZE)
+        let left = self.logo_rect().right + LOGO_GAP;
+        Rect::from_size(left, PADDING, GRIP_WIDTH, BUTTON_SIZE)
     }
 
     pub fn button_rect(&self, button: ToolbarButton) -> Rect {
-        let mut left = PADDING + GRIP_WIDTH + BUTTON_GAP;
+        let mut left = self.grip_rect().right + BUTTON_GAP;
         for candidate in ToolbarButton::ALL {
             if candidate.starts_new_group() {
                 left += GROUP_GAP;
@@ -285,6 +298,17 @@ mod tests {
             let (x, y) = layout.button_rect(button).center();
             assert_eq!(layout.hit_test(x, y), ToolbarHit::Button(button));
         }
+    }
+
+    #[test]
+    fn logo_comes_first_and_drags_like_the_grip() {
+        let layout = ToolbarLayout::new(None);
+        let logo = layout.logo_rect();
+        assert!(logo.right <= layout.grip_rect().left);
+        let (x, y) = logo.center();
+        assert_eq!(layout.hit_test(x, y), ToolbarHit::Background);
+        let button_middle = layout.button_rect(ToolbarButton::Color).center().1;
+        assert_eq!(y, button_middle, "logo is centred on the button row");
     }
 
     #[test]
