@@ -4,6 +4,10 @@
 //! The glow is a `composition_window` placed just below the toolbar: it is
 //! click-through and only draws while pulsing (then it hides, costing
 //! nothing). It knows nothing about the toolbar beyond its rectangle.
+//!
+//! The pulse timing and the layered drawing are also shared, so other
+//! windows (the crop screen's save panel) can draw the same glow inside
+//! their own content.
 
 use std::cell::RefCell;
 use std::f32::consts::TAU;
@@ -13,6 +17,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_PRIMITIVE_BLEND_COPY, D2D1_PRIMITIVE_BLEND_SOURCE_OVER, D2D1_ROUNDED_RECT,
+    ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, KillTimer, MA_NOACTIVATE, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetTimer,
@@ -26,8 +31,8 @@ use crate::composition_window::{self, CompositionSurface};
 /// Windows' reference DPI: at 96 DPI one DIP is one pixel.
 const BASE_DPI: f32 = 96.0;
 
-/// How far the glow reaches out from the toolbar's edge, in DIPs.
-const GLOW_SPREAD: f32 = 16.0;
+/// How far the glow reaches out from the highlighted edge, in DIPs.
+pub const GLOW_SPREAD: f32 = 16.0;
 /// The glow is drawn as this many stacked, see-through rounded rectangles,
 /// which blend into a soft fade from the toolbar's edge outwards.
 const GLOW_LAYERS: u16 = 14;
@@ -39,7 +44,7 @@ const TOOLBAR_CORNER_RADIUS: f32 = 8.0;
 const PULSE_COUNT: f32 = 3.0;
 const GLOW_DURATION: Duration = Duration::from_millis(2400);
 /// About 60 frames per second while pulsing.
-const FRAME_MS: u32 = 16;
+pub const FRAME_MS: u32 = 16;
 const FRAME_TIMER_ID: usize = 1;
 
 const CLEAR: D2D1_COLOR_F = D2D1_COLOR_F {
@@ -84,7 +89,7 @@ pub fn pulse_around(target: PixelRect, below: HWND, dpi: u32, color_rgb: [f32; 3
 /// How bright the glow is `elapsed` after it started, from 0.0 to 1.0, or
 /// `None` once it is over. Brightness rises and falls smoothly
 /// [`PULSE_COUNT`] times.
-fn pulse_brightness(elapsed: Duration) -> Option<f32> {
+pub fn pulse_brightness(elapsed: Duration) -> Option<f32> {
     if elapsed >= GLOW_DURATION {
         return None;
     }
@@ -179,26 +184,19 @@ impl GlowState {
 
 /// Draws the glow in DIPs. Must be called inside `draw_frame`.
 fn draw_glow(surface: &CompositionSurface, pulse: &Pulse, brightness: f32) {
-    let [red, green, blue] = pulse.color_rgb;
-    let color = D2D1_COLOR_F {
-        r: red,
-        g: green,
-        b: blue,
-        a: 1.0,
-    };
     let (width, height) = pulse.target_size;
+    let toolbar = toolbar_outline(width, height);
+    draw_layers(
+        &surface.context,
+        &surface.brush,
+        &toolbar,
+        GLOW_SPREAD,
+        brightness,
+        pulse.color_rgb,
+    );
     // SAFETY: plain COM calls inside `draw_frame` (between BeginDraw and
     // EndDraw).
     unsafe {
-        surface.brush.SetColor(&color);
-        surface.brush.SetOpacity(LAYER_OPACITY * brightness);
-        // Outermost (largest) first: every layer adds to the ones under
-        // it, so the glow is strongest right at the toolbar's edge.
-        for layer in 0..GLOW_LAYERS {
-            let reach = GLOW_SPREAD * f32::from(GLOW_LAYERS - layer) / f32::from(GLOW_LAYERS);
-            let rect = rounded_around(width, height, reach);
-            surface.context.FillRoundedRectangle(&rect, &surface.brush);
-        }
         // Punch out the toolbar's own area, so the slightly see-through
         // toolbar on top is not tinted by the glow.
         surface.context.SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
@@ -206,25 +204,74 @@ fn draw_glow(surface: &CompositionSurface, pulse: &Pulse, brightness: f32) {
         surface.brush.SetOpacity(1.0);
         surface
             .context
-            .FillRoundedRectangle(&rounded_around(width, height, 0.0), &surface.brush);
+            .FillRoundedRectangle(&toolbar, &surface.brush);
         surface
             .context
             .SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
     }
 }
 
-/// The toolbar's outline grown by `reach` DIPs on every side, in window
-/// coordinates (the toolbar starts at `GLOW_SPREAD`, `GLOW_SPREAD`).
-fn rounded_around(width: f32, height: f32, reach: f32) -> D2D1_ROUNDED_RECT {
+/// Draws a glow in `color_rgb` around `outline`, fading out over `spread`
+/// (both in the target's own units), at `brightness` from 0.0 to 1.0.
+/// Leaves the brush fully opaque. Call between BeginDraw and EndDraw, and
+/// draw the highlighted thing afterwards, on top.
+pub fn draw_layers(
+    target: &ID2D1RenderTarget,
+    brush: &ID2D1SolidColorBrush,
+    outline: &D2D1_ROUNDED_RECT,
+    spread: f32,
+    brightness: f32,
+    color_rgb: [f32; 3],
+) {
+    let [red, green, blue] = color_rgb;
+    let color = D2D1_COLOR_F {
+        r: red,
+        g: green,
+        b: blue,
+        a: 1.0,
+    };
+    // SAFETY: plain COM calls on valid objects; the caller is between
+    // BeginDraw and EndDraw.
+    unsafe {
+        brush.SetColor(&color);
+        brush.SetOpacity(LAYER_OPACITY * brightness);
+        // Outermost (largest) first: every layer adds to the ones under
+        // it, so the glow is strongest right at the edge.
+        for layer in 0..GLOW_LAYERS {
+            let reach = spread * f32::from(GLOW_LAYERS - layer) / f32::from(GLOW_LAYERS);
+            target.FillRoundedRectangle(&grown_by(outline, reach), brush);
+        }
+        brush.SetOpacity(1.0);
+    }
+}
+
+/// The toolbar's outline in glow window coordinates (the toolbar starts
+/// at `GLOW_SPREAD`, `GLOW_SPREAD`).
+fn toolbar_outline(width: f32, height: f32) -> D2D1_ROUNDED_RECT {
     D2D1_ROUNDED_RECT {
         rect: D2D_RECT_F {
-            left: GLOW_SPREAD - reach,
-            top: GLOW_SPREAD - reach,
-            right: GLOW_SPREAD + width + reach,
-            bottom: GLOW_SPREAD + height + reach,
+            left: GLOW_SPREAD,
+            top: GLOW_SPREAD,
+            right: GLOW_SPREAD + width,
+            bottom: GLOW_SPREAD + height,
         },
-        radiusX: TOOLBAR_CORNER_RADIUS + reach,
-        radiusY: TOOLBAR_CORNER_RADIUS + reach,
+        radiusX: TOOLBAR_CORNER_RADIUS,
+        radiusY: TOOLBAR_CORNER_RADIUS,
+    }
+}
+
+/// `outline` grown by `reach` on every side, corners rounded to match.
+fn grown_by(outline: &D2D1_ROUNDED_RECT, reach: f32) -> D2D1_ROUNDED_RECT {
+    let rect = outline.rect;
+    D2D1_ROUNDED_RECT {
+        rect: D2D_RECT_F {
+            left: rect.left - reach,
+            top: rect.top - reach,
+            right: rect.right + reach,
+            bottom: rect.bottom + reach,
+        },
+        radiusX: outline.radiusX + reach,
+        radiusY: outline.radiusY + reach,
     }
 }
 
@@ -285,5 +332,13 @@ mod tests {
     #[test]
     fn glow_ends_after_its_duration() {
         assert_eq!(pulse_brightness(GLOW_DURATION), None);
+    }
+
+    #[test]
+    fn grown_outline_keeps_corners_concentric() {
+        let grown = grown_by(&toolbar_outline(100.0, 40.0), 5.0);
+        assert_eq!(grown.rect.left, GLOW_SPREAD - 5.0);
+        assert_eq!(grown.rect.bottom, GLOW_SPREAD + 40.0 + 5.0);
+        assert_eq!(grown.radiusX, TOOLBAR_CORNER_RADIUS + 5.0);
     }
 }

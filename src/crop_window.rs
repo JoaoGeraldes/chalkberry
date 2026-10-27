@@ -3,6 +3,8 @@
 //! It shows the frozen screenshot with a box around the part that will be
 //! saved (the whole screen until the user drags a new box), and a panel
 //! saying where the file will go, with Change folder…, Cancel and Save.
+//! When it opens, the panel pulses the start-up glow (from `glow`) a few
+//! times, so the user notices where to save.
 //! Enter saves, Esc cancels. When it closes it posts [`WM_CROP_FINISHED`]
 //! to its owner; the saved file's path is then available from
 //! [`take_saved_path`]. Layout maths lives in `crop`, file work in
@@ -10,6 +12,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -38,10 +41,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetSystemMetrics, IDC_ARROW,
-    IDC_CROSS, LoadCursorW, MB_ICONERROR, MB_OK, MessageBoxW, PostMessageW, RegisterClassW,
-    SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SetCursor, SetForegroundWindow, ShowWindow, WM_APP,
-    WM_CAPTURECHANGED, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    IDC_CROSS, KillTimer, LoadCursorW, MB_ICONERROR, MB_OK, MessageBoxW, PostMessageW,
+    RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SetCursor, SetForegroundWindow, SetTimer,
+    ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_DESTROY, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WM_PAINT, WM_SETCURSOR, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
@@ -49,6 +53,7 @@ use crate::callout_placement::PixelRect;
 use crate::crop::{
     self, CropButton, PanelLayout, clamp_to_image, is_click_not_drag, rect_from_corners,
 };
+use crate::glow;
 use crate::screenshot::{self, Screenshot};
 
 /// Posted to the owner when the crop screen closes (saved or cancelled).
@@ -87,6 +92,10 @@ const BUTTON_HOVER_COLOR: D2D1_COLOR_F = color(0.33, 0.33, 0.36, 1.0);
 const SAVE_COLOR: D2D1_COLOR_F = color(0.2, 0.5, 0.92, 1.0);
 const SAVE_HOVER_COLOR: D2D1_COLOR_F = color(0.28, 0.58, 1.0, 1.0);
 const LABEL_BACKGROUND: D2D1_COLOR_F = color(0.0, 0.0, 0.0, 0.7);
+/// The panel's glow matches the box and the Save button.
+const PANEL_GLOW_RGB: [f32; 3] = [BOX_COLOR.r, BOX_COLOR.g, BOX_COLOR.b];
+/// Redraws the panel's glow while it pulses.
+const GLOW_TIMER_ID: usize = 1;
 
 thread_local! {
     static CROP_STATE: RefCell<Option<CropState>> = const { RefCell::new(None) };
@@ -101,9 +110,11 @@ pub fn open(owner: HWND, shot: Screenshot) -> Result<()> {
     CROP_STATE.with(|cell| *cell.borrow_mut() = Some(state));
     // SAFETY: plain Win32 calls on our own valid window. The user just
     // clicked our toolbar, so we may take the foreground (for Enter/Esc).
+    // The timer is stopped once the glow ends, or dies with the window.
     unsafe {
         let _ = ShowWindow(window, SW_SHOW);
         let _ = SetForegroundWindow(window);
+        SetTimer(Some(window), GLOW_TIMER_ID, glow::FRAME_MS, None);
     }
     Ok(())
 }
@@ -170,6 +181,8 @@ struct CropState {
     hovered_button: Option<CropButton>,
     pressed_button: Option<CropButton>,
     folder: PathBuf,
+    /// When the screen opened; the panel's glow pulses from then.
+    opened_at: Instant,
 }
 
 impl CropState {
@@ -213,6 +226,7 @@ impl CropState {
             hovered_button: None,
             pressed_button: None,
             folder: screenshot::remembered_folder(),
+            opened_at: Instant::now(),
         })
     }
 
@@ -313,6 +327,16 @@ impl CropState {
         }
     }
 
+    /// Redraws the panel's glow, and stops the timer once it is over.
+    fn on_glow_frame(&self) {
+        if glow::pulse_brightness(self.opened_at.elapsed()).is_none() {
+            // SAFETY: plain Win32 call on our own valid window.
+            let _ = unsafe { KillTimer(Some(self.window), GLOW_TIMER_ID) };
+        }
+        // Also after the end, so the last frame clears the glow.
+        self.request_redraw();
+    }
+
     fn request_redraw(&self) {
         // SAFETY: plain Win32 call on our own valid window.
         let _ = unsafe { InvalidateRect(Some(self.window), None, false) };
@@ -403,7 +427,31 @@ impl CropState {
             self.dim_outside(&painter, saved_box);
         }
         draw_box(&painter, saved_box, self.scale);
+        self.draw_panel_glow(graphics);
         self.draw_panel(&painter);
+    }
+
+    /// The pulsing glow around the panel, drawn underneath it while the
+    /// screen has just opened.
+    fn draw_panel_glow(&self, graphics: &Graphics) {
+        let Some(brightness) = glow::pulse_brightness(self.opened_at.elapsed()) else {
+            return;
+        };
+        let (left, top, right, bottom) = self.panel.panel();
+        let corner_radius = PANEL_CORNER_RADIUS * self.scale;
+        let outline = D2D1_ROUNDED_RECT {
+            rect: rect(left, top, right, bottom),
+            radiusX: corner_radius,
+            radiusY: corner_radius,
+        };
+        glow::draw_layers(
+            &graphics.target,
+            &graphics.brush,
+            &outline,
+            glow::GLOW_SPREAD * self.scale,
+            brightness,
+            PANEL_GLOW_RGB,
+        );
     }
 
     /// Darkens the four areas around the box.
@@ -654,6 +702,7 @@ unsafe extern "system" fn window_proc(
             Some(())
         }
         WM_CAPTURECHANGED => with_state(CropState::finish_drag),
+        WM_TIMER if wparam.0 == GLOW_TIMER_ID => with_state(|state| state.on_glow_frame()),
         WM_KEYDOWN => on_key(window, wparam),
         WM_SETCURSOR => {
             let cursor_position = cursor_position_in(window);
