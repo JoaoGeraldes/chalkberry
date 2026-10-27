@@ -25,8 +25,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Result, w};
 
-use crate::callout_placement::PixelRect;
-use crate::composition_window::{self, CompositionSurface};
+use crate::notices::composition_window::{self, CompositionSurface};
+use crate::notices::placement::PixelRect;
 
 /// Windows' reference DPI: at 96 DPI one DIP is one pixel.
 const BASE_DPI: f32 = 96.0;

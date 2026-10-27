@@ -3,7 +3,7 @@
 //! Pure Rust: this module must never depend on Windows APIs, so the logic
 //! that decides what a stroke looks like can be unit-tested on any machine.
 
-use crate::config::PenSettings;
+use crate::settings::config::PenSettings;
 
 /// Points closer than this to the previous point are ignored. Dropping them
 /// avoids tiny jittery segments: mouse positions are whole pixels, so very
@@ -254,7 +254,7 @@ mod tests {
             shape,
             pen: PenSettings {
                 width_px,
-                ..crate::config::DEFAULT_PEN
+                ..crate::settings::config::DEFAULT_PEN
             },
         }
     }

@@ -9,7 +9,7 @@
 //! open, a row with that picker's choices; and at the bottom a small
 //! two-line hint on how to draw and erase.
 
-use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, WIDTH_CHOICES};
+use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, WIDTH_CHOICES};
 
 /// Space between the toolbar's edge and its contents.
 const PADDING: f32 = 5.0;

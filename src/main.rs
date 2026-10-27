@@ -7,25 +7,12 @@
 // `eprintln!` messages are visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod callout;
-mod callout_placement;
-mod chalk;
-mod command;
-mod composition_window;
-mod config;
-mod crop;
-mod crop_window;
-mod cursors;
-mod glow;
-mod input;
-mod json;
-mod overlay;
-mod renderer;
+mod app;
+mod drawing;
+mod notices;
 mod screenshot;
 mod settings;
-mod stroke;
 mod toolbar;
-mod toolbar_layout;
 mod tray;
 
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
@@ -48,9 +35,9 @@ fn run() -> Result<()> {
     // COM is needed for saving screenshots as PNG and for the folder picker.
     // SAFETY: plain call, once, on the UI thread, before any COM use.
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
-    let overlay_window = overlay::create_overlay()?;
+    let overlay_window = app::overlay::create_overlay()?;
     // Kept alive until the message loop ends; dropping it removes the hook.
-    let _ctrl_key_hook = input::CtrlKeyHook::install(overlay_window)?;
+    let _ctrl_key_hook = drawing::input::CtrlKeyHook::install(overlay_window)?;
     run_message_loop();
     Ok(())
 }

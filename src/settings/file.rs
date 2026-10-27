@@ -10,8 +10,10 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use crate::config::{COLOR_CHOICES, DEFAULT_PEN, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
-use crate::json::{self, JsonValue};
+use crate::settings::config::{
+    COLOR_CHOICES, DEFAULT_PEN, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES,
+};
+use crate::settings::json::{self, JsonValue};
 
 const SETTINGS_FOLDER_NAME: &str = "Pen Marker";
 const SETTINGS_FILE_NAME: &str = "settings.json";

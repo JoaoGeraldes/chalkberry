@@ -7,7 +7,7 @@
 //! even on a screen full of dark windows. The bubble is a
 //! `composition_window`, so it is click-through and its rounded corners
 //! and arrow are truly transparent. It knows nothing about strokes, pens
-//! or menus; placement maths lives in `callout_placement`.
+//! or menus; placement maths lives in `notices::placement`.
 
 use std::cell::RefCell;
 use std::f32::consts::FRAC_1_SQRT_2;
@@ -28,8 +28,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, Result, w};
 use windows_numerics::{Matrix3x2, Vector2};
 
-use crate::callout_placement::{ArrowEdge, BubbleSize, PixelRect, place_bubble};
-use crate::composition_window::{self, CompositionSurface, scale_transform};
+use crate::notices::composition_window::{self, CompositionSurface, scale_transform};
+use crate::notices::placement::{ArrowEdge, BubbleSize, PixelRect, place_bubble};
 
 /// How long a bubble stays up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

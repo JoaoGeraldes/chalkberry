@@ -6,7 +6,7 @@
 //! The toolbar only draws itself and posts [`WM_TOOLBAR_COMMAND`] (and
 //! [`WM_TOOLBAR_MOVED`]) to its owner (the overlay). It never changes pen
 //! settings or strokes directly, and does not save its own position.
-//! Layout and hit testing live in `toolbar_layout`.
+//! Layout and hit testing live in `toolbar::layout`.
 
 use std::cell::RefCell;
 
@@ -45,11 +45,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{Result, w};
 use windows_numerics::Vector2;
 
-use crate::callout::{self, CalloutKind};
-use crate::callout_placement::PixelRect;
-use crate::command::Command;
-use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
-use crate::toolbar_layout::{Picker, Rect, ToolbarButton, ToolbarHit, ToolbarLayout, tooltip_text};
+use crate::app::command::Command;
+use crate::notices::callout::{self, CalloutKind};
+use crate::notices::placement::PixelRect;
+use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
+use crate::toolbar::layout::{
+    Picker, Rect, ToolbarButton, ToolbarHit, ToolbarLayout, tooltip_text,
+};
 
 /// Posted to the owner window when the user picks something on the
 /// toolbar. `wparam` is the [`Command::id`].

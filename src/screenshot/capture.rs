@@ -29,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PWSTR, Result, w};
 
-use crate::crop::screenshot_file_name;
+use crate::screenshot::crop::screenshot_file_name;
 
 const BYTES_PER_PIXEL: u32 = 4;
 /// Screenshots go here (inside the user's Pictures folder) until the user

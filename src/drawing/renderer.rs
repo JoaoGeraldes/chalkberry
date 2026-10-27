@@ -43,9 +43,9 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::core::{Interface, Result};
 use windows_numerics::Vector2;
 
-use crate::chalk::{self, GRAIN_TEXTURE_SIZE_PX};
-use crate::config::PenSettings;
-use crate::stroke::{DrawnStroke, PathSegment, Point, StrokeShape};
+use crate::drawing::chalk::{self, GRAIN_TEXTURE_SIZE_PX};
+use crate::drawing::stroke::{DrawnStroke, PathSegment, Point, StrokeShape};
+use crate::settings::config::PenSettings;
 
 /// Direct2D's default DPI. Using it everywhere means 1 DIP == 1 pixel.
 const PIXEL_EXACT_DPI: f32 = 96.0;

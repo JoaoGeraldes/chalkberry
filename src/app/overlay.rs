@@ -33,19 +33,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Result, w};
 
-use crate::callout::{self, CalloutKind};
-use crate::callout_placement::PixelRect;
-use crate::command::Command;
-use crate::config::{CLEAR_HOTKEY_LETTER, PenSettings, QUIT_HOTKEY_LETTER};
-use crate::crop_window::{self, WM_CROP_FINISHED};
-use crate::cursors::Cursors;
-use crate::glow;
-use crate::input::WM_CTRL_STATE_CHANGED;
-use crate::renderer::Renderer;
-use crate::screenshot;
-use crate::settings::Settings;
-use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
-use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND, WM_TOOLBAR_MOVED};
+use crate::app::command::Command;
+use crate::drawing::cursors::Cursors;
+use crate::drawing::input::WM_CTRL_STATE_CHANGED;
+use crate::drawing::renderer::Renderer;
+use crate::drawing::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
+use crate::notices::callout::{self, CalloutKind};
+use crate::notices::glow;
+use crate::notices::placement::PixelRect;
+use crate::screenshot::capture;
+use crate::screenshot::crop_window::{self, WM_CROP_FINISHED};
+use crate::settings::config::{CLEAR_HOTKEY_LETTER, PenSettings, QUIT_HOTKEY_LETTER};
+use crate::settings::file::Settings;
+use crate::toolbar::window::{Toolbar, WM_TOOLBAR_COMMAND, WM_TOOLBAR_MOVED};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
 
 const READY_TITLE: &str = "Pen Marker is ready";
@@ -80,7 +80,7 @@ thread_local! {
 /// and tray icon, and registers the clear/quit hotkeys. Returns the window so other
 /// modules can target it.
 pub fn create_overlay() -> Result<HWND> {
-    let default_folder = screenshot::default_folder();
+    let default_folder = capture::default_folder();
     let saved_settings = Settings::load(default_folder.clone());
     let is_first_start = saved_settings.is_none();
     let settings = saved_settings.unwrap_or_else(|| Settings::defaults(default_folder));
@@ -463,7 +463,7 @@ impl OverlayState {
         // SAFETY: plain call; waits until the screen no longer shows them.
         let _ = unsafe { DwmFlush() };
         let folder = self.settings.screenshot_folder.clone();
-        let opened = screenshot::capture_all_screens()
+        let opened = capture::capture_all_screens()
             .and_then(|shot| crop_window::open(self.window, shot, folder));
         if let Err(error) = opened {
             log_error("taking screenshot", &error);

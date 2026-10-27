@@ -5,7 +5,7 @@
 //! Pure Rust: this module must never depend on Windows APIs. Positions are
 //! in pixels of the crop window (its top-left is 0, 0).
 
-use crate::callout_placement::PixelRect;
+use crate::notices::placement::PixelRect;
 
 /// Drags shorter than this (in pixels, either way) count as a click: they
 /// clear the box, so the whole screen is saved.

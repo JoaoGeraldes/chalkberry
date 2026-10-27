@@ -142,4 +142,4 @@ cargo test
 
 - Code rules and the module map are in [`CLAUDE.md`](CLAUDE.md).
 - The menu's colour, thickness and opacity choices, the startup pen, and the
-  hotkeys live in [`src/config.rs`](src/config.rs).
+  hotkeys live in [`src/settings/config.rs`](src/settings/config.rs).

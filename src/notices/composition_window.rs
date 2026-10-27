@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{Interface, PCWSTR, Result};
 use windows_numerics::Matrix3x2;
 
-use crate::renderer::{bitmap_properties, create_d3d_device, create_swap_chain};
+use crate::drawing::renderer::{bitmap_properties, create_d3d_device, create_swap_chain};
 
 /// The drawing surface is allocated once at this size. Callers keep their
 /// window smaller than this (even at 300% scaling); the window shows only

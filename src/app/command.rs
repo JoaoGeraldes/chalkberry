@@ -4,7 +4,7 @@
 //! has a small number id, used both as a menu item id and as the message
 //! parameter the toolbar posts to the overlay, so one decoder serves both.
 
-use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
+use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
 
 // Each group of choices gets its own range of ids, so an id tells both the
 // group and the choice. 0 is never used: menus report it for "nothing".
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn picking_a_colour_changes_only_the_colour() {
-        let pen = crate::config::DEFAULT_PEN;
+        let pen = crate::settings::config::DEFAULT_PEN;
         let picked = Command::PickColor(3)
             .pen_after(pen)
             .expect("colour 3 exists");
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn picking_width_and_opacity_changes_them() {
-        let pen = crate::config::DEFAULT_PEN;
+        let pen = crate::settings::config::DEFAULT_PEN;
         let thicker = Command::PickWidth(4)
             .pen_after(pen)
             .expect("width 4 exists");
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn non_pen_commands_and_missing_choices_leave_pen_alone() {
-        let pen = crate::config::DEFAULT_PEN;
+        let pen = crate::settings::config::DEFAULT_PEN;
         assert_eq!(Command::ClearDrawing.pen_after(pen), None);
         assert_eq!(Command::PickColor(COLOR_CHOICES.len()).pen_after(pen), None);
     }

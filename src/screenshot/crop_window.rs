@@ -50,12 +50,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
-use crate::callout_placement::PixelRect;
-use crate::crop::{
+use crate::notices::glow;
+use crate::notices::placement::PixelRect;
+use crate::screenshot::capture::{self, Screenshot};
+use crate::screenshot::crop::{
     self, CropButton, PanelLayout, clamp_to_image, is_click_not_drag, rect_from_corners,
 };
-use crate::glow;
-use crate::screenshot::{self, Screenshot};
 
 /// Posted to the owner when the crop screen closes (saved or cancelled).
 pub const WM_CROP_FINISHED: u32 = WM_APP + 4;
@@ -319,8 +319,8 @@ impl CropState {
         let pixels = crop::crop_bgra(&self.shot.pixels, self.shot.width, saved_box);
         let width = (saved_box.right - saved_box.left) as u32;
         let height = (saved_box.bottom - saved_box.top) as u32;
-        let path = screenshot::new_file_path(&self.folder);
-        screenshot::save_png(&pixels, width, height, &path)
+        let path = capture::new_file_path(&self.folder);
+        capture::save_png(&pixels, width, height, &path)
             .map_err(|error| format!("Could not save the screenshot:\n{error}"))?;
         Ok(path)
     }
@@ -761,7 +761,7 @@ fn run_action(window: HWND, action: CropAction) {
             let Some(current) = with_state(|state| state.folder.clone()) else {
                 return;
             };
-            if let Some(folder) = screenshot::pick_folder(window, &current) {
+            if let Some(folder) = capture::pick_folder(window, &current) {
                 with_state(|state| state.set_folder(folder));
             }
         }

@@ -24,9 +24,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
-use crate::callout_placement::PixelRect;
-use crate::command::Command;
-use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
+use crate::app::command::Command;
+use crate::notices::placement::PixelRect;
+use crate::settings::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
 
 /// Posted to the overlay when the user interacts with the tray icon.
 /// The low word of `lparam` is the mouse message, e.g. `WM_LBUTTONUP`.
