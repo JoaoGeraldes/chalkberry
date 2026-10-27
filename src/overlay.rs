@@ -35,6 +35,7 @@ use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::cursors::Cursors;
+use crate::glow;
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
 use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
@@ -74,6 +75,7 @@ pub fn create_overlay() -> Result<HWND> {
     let (width, height) = virtual_screen_size();
     let renderer = Renderer::new(window, width, height, &DEFAULT_PEN)?;
     callout::create(window)?;
+    glow::create(window)?;
     let toolbar = Toolbar::create(window, &DEFAULT_PEN)?;
     let tray_icon = TrayIcon::new(window)?;
     // Not fatal: right after login the taskbar may not exist yet. The icon
@@ -366,14 +368,17 @@ impl OverlayState {
         callout::show(STILL_RUNNING_TITLE, STILL_RUNNING_TEXT, target, dpi, kind);
     }
 
-    /// At start-up: briefly point at the toolbar, so it is clear the app is
-    /// running and where its controls are.
+    /// At start-up: pulse a glow around the toolbar and point at it with a
+    /// light bubble, so it is clear the app is running and where its
+    /// controls are, even on a screen full of dark windows.
     fn point_out_toolbar(&self) {
+        let target = self.toolbar.screen_rect();
+        let dpi = self.toolbar.dpi();
+        glow::pulse_around(target, self.toolbar.window(), dpi, self.pen.color_rgb);
         let kind = CalloutKind::Notice {
             visible_ms: READY_VISIBLE_MS,
         };
-        let target = self.toolbar.screen_rect();
-        callout::show(READY_TITLE, READY_TEXT, target, self.toolbar.dpi(), kind);
+        callout::show(READY_TITLE, READY_TEXT, target, dpi, kind);
     }
 
     /// Puts the tray icon back after Explorer recreated the taskbar.

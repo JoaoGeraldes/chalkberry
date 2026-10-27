@@ -8,7 +8,8 @@ Rust (edition 2024) + `windows` crate; Direct2D → DXGI swap chain → DirectCo
 `renderer.rs` GPU drawing · `tray.rs` tray icon + settings menu · `toolbar.rs` floating toolbar window ·
 `toolbar_layout.rs` toolbar layout, hit testing + tooltip texts (pure) · `command.rs` user commands + ids (pure) ·
 `callout.rs` speech-bubble window (tooltips, notices) · `callout_placement.rs` bubble placement (pure) ·
-`cursors.rs` native pen + crosshair cursors ·
+`cursors.rs` native pen + crosshair cursors · `glow.rs` start-up glow around the toolbar ·
+`composition_window.rs` shared transparent click-through window (callout, glow) ·
 `config.rs` pen choices + hotkeys.
 
 ## Rules

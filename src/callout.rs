@@ -2,45 +2,34 @@
 //! for the toolbar's tooltips, the "ready" hint at start-up, and the
 //! "still running in the tray" notice when the toolbar is hidden.
 //!
-//! There is one bubble: showing a new message replaces the current one. It
-//! is click-through, never takes focus, and draws through DirectComposition
-//! so its rounded corners and arrow are truly transparent. It knows nothing
-//! about strokes, pens or menus; placement maths lives in
-//! `callout_placement`.
+//! There is one bubble: showing a new message replaces the current one.
+//! Tooltips are dark and discreet; notices are light, so they stand out
+//! even on a screen full of dark windows. The bubble is a
+//! `composition_window`, so it is click-through and its rounded corners
+//! and arrow are truly transparent. It knows nothing about strokes, pens
+//! or menus; placement maths lives in `callout_placement`.
 
 use std::cell::RefCell;
 use std::f32::consts::FRAC_1_SQRT_2;
 
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F};
-use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-    D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_ROUNDED_RECT,
-    D2D1CreateFactory, ID2D1Bitmap1, ID2D1DeviceContext, ID2D1Factory1, ID2D1SolidColorBrush,
-};
-use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
-};
+use windows::Win32::Graphics::Direct2D::{D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ROUNDED_RECT};
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
     DWRITE_TEXT_METRICS, DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, IDWriteTextLayout,
 };
-use windows::Win32::Graphics::Dxgi::{DXGI_PRESENT, IDXGIDevice, IDXGISurface, IDXGISwapChain1};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, HWND_TOPMOST, KillTimer, LWA_ALPHA,
-    MA_NOACTIVATE, RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-    SM_YVIRTUALSCREEN, SW_HIDE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes,
-    SetTimer, SetWindowPos, ShowWindow, WM_DESTROY, WM_MOUSEACTIVATE, WM_TIMER, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    DefWindowProcW, GetSystemMetrics, HWND_TOPMOST, KillTimer, MA_NOACTIVATE, SM_CXVIRTUALSCREEN,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SWP_NOACTIVATE,
+    SWP_SHOWWINDOW, SetTimer, SetWindowPos, ShowWindow, WM_DESTROY, WM_MOUSEACTIVATE, WM_TIMER,
 };
-use windows::core::{Interface, PCWSTR, Result, w};
+use windows::core::{PCWSTR, Result, w};
 use windows_numerics::{Matrix3x2, Vector2};
 
 use crate::callout_placement::{ArrowEdge, BubbleSize, PixelRect, place_bubble};
-use crate::renderer::{bitmap_properties, create_d3d_device, create_swap_chain};
+use crate::composition_window::{self, CompositionSurface, scale_transform};
 
 /// How long a bubble stays up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,10 +42,6 @@ pub enum CalloutKind {
 
 /// Windows' reference DPI: at 96 DPI one DIP is one pixel.
 const BASE_DPI: f32 = 96.0;
-/// The drawing surface is allocated once at this size. Bubbles are far
-/// smaller even at 300% scaling; the window shows only its own part.
-const SURFACE_WIDTH_PX: u32 = 1024;
-const SURFACE_HEIGHT_PX: u32 = 512;
 
 // Bubble shape, in DIPs.
 const MAX_TEXT_WIDTH: f32 = 240.0;
@@ -77,15 +62,29 @@ const FONT: PCWSTR = w!("Segoe UI");
 const TITLE_FONT_SIZE: f32 = 12.0;
 const BODY_FONT_SIZE: f32 = 11.5;
 
-const BUBBLE_COLOR: D2D1_COLOR_F = gray(0.17);
-const BORDER_COLOR: D2D1_COLOR_F = gray(0.36);
-const TITLE_COLOR: D2D1_COLOR_F = gray(0.97);
-const BODY_COLOR: D2D1_COLOR_F = gray(0.74);
-const TRANSPARENT: D2D1_COLOR_F = D2D1_COLOR_F {
-    r: 0.0,
-    g: 0.0,
-    b: 0.0,
-    a: 0.0,
+/// The colours of one bubble style.
+struct Palette {
+    bubble: D2D1_COLOR_F,
+    border: D2D1_COLOR_F,
+    title: D2D1_COLOR_F,
+    body: D2D1_COLOR_F,
+}
+
+/// Tooltips: dark, matching the toolbar, so they stay discreet.
+const DARK: Palette = Palette {
+    bubble: gray(0.17),
+    border: gray(0.36),
+    title: gray(0.97),
+    body: gray(0.74),
+};
+
+/// Notices: near-white with dark text, the strongest contrast on a
+/// desktop full of dark windows. The border keeps them crisp on white.
+const LIGHT: Palette = Palette {
+    bubble: gray(0.98),
+    border: gray(0.68),
+    title: gray(0.08),
+    body: gray(0.3),
 };
 
 /// Fades run in this many steps of [`FADE_STEP_MS`] (about 120 ms).
@@ -102,7 +101,12 @@ thread_local! {
 
 /// Creates the (hidden) bubble window. `owner` keeps it above the overlay.
 pub fn create(owner: HWND) -> Result<()> {
-    let window = create_callout_window(owner)?;
+    let window = composition_window::create_window(
+        w!("WindowsPenMarkerCallout"),
+        w!("Pen Marker callout"),
+        owner,
+        Some(window_proc),
+    )?;
     let state = CalloutState::new(window)?;
     CALLOUT_STATE.with(|cell| *cell.borrow_mut() = Some(state));
     Ok(())
@@ -141,6 +145,15 @@ enum Fade {
     Out { step: u32 },
 }
 
+impl CalloutKind {
+    fn palette(self) -> &'static Palette {
+        match self {
+            CalloutKind::Tooltip => &DARK,
+            CalloutKind::Notice { .. } => &LIGHT,
+        }
+    }
+}
+
 impl Fade {
     fn opacity(self) -> f32 {
         let fraction = |step: u32| step as f32 / FADE_STEPS as f32;
@@ -167,22 +180,9 @@ struct Content {
     scale: f32,
 }
 
-/// GPU objects for drawing into the bubble window.
-struct Surface {
-    context: ID2D1DeviceContext,
-    swap_chain: IDXGISwapChain1,
-    back_buffer: ID2D1Bitmap1,
-    brush: ID2D1SolidColorBrush,
-    // Never used after setup, but releasing them would remove the content
-    // from the window, so they must stay alive.
-    _composition_device: IDCompositionDevice,
-    _composition_target: IDCompositionTarget,
-    _composition_visual: IDCompositionVisual,
-}
-
 struct CalloutState {
     window: HWND,
-    surface: Surface,
+    surface: CompositionSurface,
     text_factory: IDWriteFactory,
     title_format: IDWriteTextFormat,
     body_format: IDWriteTextFormat,
@@ -198,7 +198,7 @@ impl CalloutState {
             unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         Ok(Self {
             window,
-            surface: create_surface(window)?,
+            surface: CompositionSurface::new(window)?,
             title_format: create_text_format(
                 &text_factory,
                 DWRITE_FONT_WEIGHT_SEMI_BOLD,
@@ -372,22 +372,15 @@ impl CalloutState {
         let Some(content) = &self.content else {
             return Ok(());
         };
-        let surface = &self.surface;
-        // SAFETY: plain COM calls; BeginDraw/EndDraw are always paired.
-        unsafe {
-            surface.context.SetTarget(&surface.back_buffer);
-            surface.context.BeginDraw();
-            surface.context.Clear(Some(&TRANSPARENT));
+        self.surface.draw_frame(content.scale, |surface| {
             // The whole bubble fades together through the brush opacity.
-            surface.brush.SetOpacity(self.fade.opacity());
+            // SAFETY: plain COM call on a valid brush.
+            unsafe { surface.brush.SetOpacity(self.fade.opacity()) };
             self.draw_bubble(content);
-            surface.context.SetTransform(&scale_transform(1.0));
-            surface.context.EndDraw(None, None)?;
-            surface.swap_chain.Present(1, DXGI_PRESENT(0)).ok()
-        }
+        })
     }
 
-    /// Draws the bubble in DIPs. Must be called between BeginDraw and EndDraw.
+    /// Draws the bubble in DIPs. Must be called inside `draw_frame`.
     fn draw_bubble(&self, content: &Content) {
         let (width, height) = content.bubble_size;
         let body_top = match content.arrow_edge {
@@ -400,6 +393,7 @@ impl CalloutState {
         };
         let context = &self.surface.context;
         let brush = &self.surface.brush;
+        let palette = self.kind.palette();
         let outer = rounded(0.0, body_top, width, height, CORNER_RADIUS);
         let inner = rounded(
             BORDER_WIDTH,
@@ -413,21 +407,20 @@ impl CalloutState {
         let body_text_top = title_top + content.title_height + TITLE_BODY_GAP;
         // SAFETY: plain COM calls between BeginDraw and EndDraw.
         unsafe {
-            context.SetTransform(&scale_transform(content.scale));
-            brush.SetColor(&BORDER_COLOR);
+            brush.SetColor(&palette.border);
             context.FillRoundedRectangle(&outer, brush);
-            brush.SetColor(&BUBBLE_COLOR);
+            brush.SetColor(&palette.bubble);
             context.FillRoundedRectangle(&inner, brush);
             self.draw_arrow(content, arrow_base_y);
             context.SetTransform(&scale_transform(content.scale));
-            brush.SetColor(&TITLE_COLOR);
+            brush.SetColor(&palette.title);
             context.DrawTextLayout(
                 vector(text_left, title_top),
                 &content.title,
                 brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,
             );
-            brush.SetColor(&BODY_COLOR);
+            brush.SetColor(&palette.body);
             context.DrawTextLayout(
                 vector(text_left, body_text_top),
                 &content.body,
@@ -458,44 +451,6 @@ impl CalloutState {
     }
 }
 
-fn create_surface(window: HWND) -> Result<Surface> {
-    let d3d_device = create_d3d_device()?;
-    let dxgi_device: IDXGIDevice = d3d_device.cast()?;
-    let swap_chain = create_swap_chain(&dxgi_device, SURFACE_WIDTH_PX, SURFACE_HEIGHT_PX)?;
-    // SAFETY: plain COM calls on valid objects created above.
-    unsafe {
-        let factory: ID2D1Factory1 = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
-        let context = factory
-            .CreateDevice(&dxgi_device)?
-            .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
-        let back_buffer_surface: IDXGISurface = swap_chain.GetBuffer(0)?;
-        let back_buffer = context.CreateBitmapFromDxgiSurface(
-            &back_buffer_surface,
-            Some(&bitmap_properties(
-                D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            )),
-        )?;
-        let brush = context.CreateSolidColorBrush(&TITLE_COLOR, None)?;
-
-        let composition_device: IDCompositionDevice = DCompositionCreateDevice(&dxgi_device)?;
-        let composition_target = composition_device.CreateTargetForHwnd(window, true)?;
-        let composition_visual = composition_device.CreateVisual()?;
-        composition_visual.SetContent(&swap_chain)?;
-        composition_target.SetRoot(&composition_visual)?;
-        composition_device.Commit()?;
-
-        Ok(Surface {
-            context,
-            swap_chain,
-            back_buffer,
-            brush,
-            _composition_device: composition_device,
-            _composition_target: composition_target,
-            _composition_visual: composition_visual,
-        })
-    }
-}
-
 fn create_text_format(
     factory: &IDWriteFactory,
     weight: DWRITE_FONT_WEIGHT,
@@ -521,47 +476,6 @@ fn text_size(layout: &IDWriteTextLayout) -> Result<(f32, f32)> {
     // SAFETY: plain DirectWrite call; `metrics` outlives it.
     unsafe { layout.GetMetrics(&mut metrics)? };
     Ok((metrics.width.ceil(), metrics.height.ceil()))
-}
-
-fn create_callout_window(owner: HWND) -> Result<HWND> {
-    let class_name = w!("WindowsPenMarkerCallout");
-    // SAFETY: plain Win32 calls; `window_proc` matches WNDPROC and lives
-    // for the whole program.
-    unsafe {
-        let instance = GetModuleHandleW(None)?;
-        let window_class = WNDCLASSW {
-            lpfnWndProc: Some(window_proc),
-            hInstance: instance.into(),
-            lpszClassName: class_name,
-            ..Default::default()
-        };
-        if RegisterClassW(&window_class) == 0 {
-            return Err(windows::core::Error::from_thread());
-        }
-        let window = CreateWindowExW(
-            // Same click-through, never-focused, composition-only setup as
-            // the overlay (see `overlay::create_overlay_window`).
-            WS_EX_NOREDIRECTIONBITMAP
-                | WS_EX_LAYERED
-                | WS_EX_TRANSPARENT
-                | WS_EX_TOPMOST
-                | WS_EX_TOOLWINDOW
-                | WS_EX_NOACTIVATE,
-            class_name,
-            w!("Pen Marker callout"),
-            WS_POPUP,
-            0,
-            0,
-            1,
-            1,
-            Some(owner),
-            None,
-            Some(instance.into()),
-            None,
-        )?;
-        SetLayeredWindowAttributes(window, COLORREF(0), 255, LWA_ALPHA)?;
-        Ok(window)
-    }
 }
 
 unsafe extern "system" fn window_proc(
@@ -607,18 +521,6 @@ fn virtual_screen() -> PixelRect {
             right: left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
             bottom: top + GetSystemMetrics(SM_CYVIRTUALSCREEN),
         }
-    }
-}
-
-/// Scales DIPs to pixels.
-fn scale_transform(scale: f32) -> Matrix3x2 {
-    Matrix3x2 {
-        M11: scale,
-        M12: 0.0,
-        M21: 0.0,
-        M22: scale,
-        M31: 0.0,
-        M32: 0.0,
     }
 }
 

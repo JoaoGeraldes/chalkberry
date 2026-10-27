@@ -33,8 +33,9 @@ A small dark bar appears at the top of the screen. Drag it by any empty spot
 A small hint under the buttons reminds you how to draw and erase. Rest the
 mouse on any button or choice for a tooltip explaining it.
 
-When the app starts, a bubble points at the toolbar for a few seconds so you
-know it is running. When you hide the toolbar, a bubble points at the tray
+When the app starts, a glow in your chalk colour pulses around the toolbar
+three times and a light bubble points at it for a few seconds, so you know
+it is running even on a screen full of dark windows. When you hide the toolbar, a bubble points at the tray
 icon to show where it went.
 
 Bring a hidden toolbar back with **Show toolbar** in the tray icon's menu.

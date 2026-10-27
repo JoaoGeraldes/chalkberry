@@ -139,6 +139,12 @@ impl Toolbar {
         let _ = unsafe { ShowWindow(self.window, SW_HIDE) };
     }
 
+    /// The toolbar's window, e.g. to place other windows next to it in the
+    /// stacking order.
+    pub fn window(&self) -> HWND {
+        self.window
+    }
+
     /// Where the toolbar is on screen, in pixels.
     pub fn screen_rect(&self) -> PixelRect {
         window_screen_rect(self.window)
