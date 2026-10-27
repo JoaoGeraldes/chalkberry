@@ -8,6 +8,7 @@
 #define AppExe "chalkberry.exe"
 
 [Setup]
+; Never change: this is how a newer setup finds and upgrades the installed app.
 AppId={{6E0B6C3A-2F5D-4B8E-9C1A-7D4E3F2A1B90}
 AppName={#AppName}
 AppVersion={#AppVersion}
