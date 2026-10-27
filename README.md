@@ -7,6 +7,7 @@ anything. Without Ctrl, the mouse works normally.
 | Action | Shortcut |
 |---|---|
 | Draw | Hold **Ctrl** + click / drag |
+| Erase a stroke | Hold **Ctrl** + right-click it (or right-drag across several) |
 | Clear drawings | **Ctrl + Alt + C** |
 | Quit | **Ctrl + Alt + Q** |
 | Change colour, thickness, opacity | Floating toolbar, or the chalkboard icon in the taskbar's notification area |
@@ -23,6 +24,8 @@ A small dark bar appears at the top of the screen. Drag it by any empty spot
 | Dot in a ring | Opens a row of opacities |
 | Bin | Clears the drawing |
 | Dash | Hides the toolbar; a notification says it is still in the tray |
+
+A small hint under the buttons reminds you how to draw and erase.
 
 Bring a hidden toolbar back with **Show toolbar** in the tray icon's menu.
 New settings apply to the next strokes; lines already drawn keep their look.

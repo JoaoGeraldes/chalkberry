@@ -1,7 +1,9 @@
-//! Stroke model and smoothing.
+//! Stroke model, smoothing, and eraser hit testing.
 //!
 //! Pure Rust: this module must never depend on Windows APIs, so the logic
 //! that decides what a stroke looks like can be unit-tested on any machine.
+
+use crate::config::PenSettings;
 
 /// Points closer than this to the previous point are ignored. Dropping them
 /// avoids tiny jittery segments: mouse positions are whole pixels, so very
@@ -12,6 +14,14 @@ const MIN_POINT_SPACING_PX: f32 = 2.5;
 /// (never) to 1.0 (jumps straight there). Below 1.0 the tip trails the
 /// cursor slightly, which irons out hand tremor and pixel steps.
 const STABILIZER_FOLLOW: f32 = 0.5;
+
+/// The eraser also takes strokes this close to the cursor, so thin lines
+/// do not need pixel-perfect aim.
+const ERASER_REACH_PX: f32 = 4.0;
+
+/// Curves are checked against this many straight pieces. Plenty for the
+/// short curves between neighbouring mouse points.
+const CURVE_PIECES_FOR_HIT_TEST: u16 = 8;
 
 /// A position in overlay pixel coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,6 +49,26 @@ impl Point {
     fn distance_to(self, other: Point) -> f32 {
         (self.x - other.x).hypot(self.y - other.y)
     }
+
+    /// Distance from this point to the straight line piece `start`..`end`.
+    fn distance_to_segment(self, start: Point, end: Point) -> f32 {
+        let (along_x, along_y) = (end.x - start.x, end.y - start.y);
+        let length_squared = along_x * along_x + along_y * along_y;
+        if length_squared == 0.0 {
+            return self.distance_to(start);
+        }
+        let projection =
+            ((self.x - start.x) * along_x + (self.y - start.y) * along_y) / length_squared;
+        let closest = start.moved_toward(end, projection.clamp(0.0, 1.0));
+        self.distance_to(closest)
+    }
+}
+
+/// The point at `t` (0.0..=1.0) along a quadratic Bézier curve.
+fn quadratic_point(start: Point, control: Point, end: Point, t: f32) -> Point {
+    let near = start.moved_toward(control, t);
+    let far = control.moved_toward(end, t);
+    near.moved_toward(far, t)
 }
 
 /// One piece of a smoothed path. Each segment continues from where the
@@ -59,6 +89,72 @@ pub enum StrokeShape {
         start: Point,
         segments: Vec<PathSegment>,
     },
+}
+
+impl StrokeShape {
+    /// The shortest distance from `point` to the stroke's centre line.
+    pub fn distance_to(&self, point: Point) -> f32 {
+        match self {
+            StrokeShape::Dot { center } => point.distance_to(*center),
+            StrokeShape::Path { start, segments } => {
+                let mut previous_end = *start;
+                let mut closest = f32::INFINITY;
+                for segment in segments {
+                    let distance = distance_to_path_segment(point, previous_end, segment);
+                    closest = closest.min(distance);
+                    previous_end = segment_end(segment);
+                }
+                closest
+            }
+        }
+    }
+}
+
+fn distance_to_path_segment(point: Point, from: Point, segment: &PathSegment) -> f32 {
+    match *segment {
+        PathSegment::Line { to } => point.distance_to_segment(from, to),
+        PathSegment::Quadratic { control, to } => {
+            let mut piece_start = from;
+            let mut closest = f32::INFINITY;
+            for piece in 1..=CURVE_PIECES_FOR_HIT_TEST {
+                let t = f32::from(piece) / f32::from(CURVE_PIECES_FOR_HIT_TEST);
+                let piece_end = quadratic_point(from, control, to, t);
+                closest = closest.min(point.distance_to_segment(piece_start, piece_end));
+                piece_start = piece_end;
+            }
+            closest
+        }
+    }
+}
+
+fn segment_end(segment: &PathSegment) -> Point {
+    match segment {
+        PathSegment::Line { to } | PathSegment::Quadratic { to, .. } => *to,
+    }
+}
+
+/// A finished stroke as it is on screen: its shape and the pen it was
+/// drawn with (needed to redraw it after another stroke is erased).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnStroke {
+    pub shape: StrokeShape,
+    pub pen: PenSettings,
+}
+
+impl DrawnStroke {
+    /// True if the eraser at `point` touches this stroke's painted area.
+    pub fn is_touched_by(&self, point: Point) -> bool {
+        let reach = self.pen.width_px / 2.0 + ERASER_REACH_PX;
+        self.shape.distance_to(point) <= reach
+    }
+}
+
+/// The index of the most recently drawn stroke that the eraser at `point`
+/// touches, so overlapping strokes are erased from the top down.
+pub fn topmost_stroke_at(strokes: &[DrawnStroke], point: Point) -> Option<usize> {
+    strokes
+        .iter()
+        .rposition(|stroke| stroke.is_touched_by(point))
 }
 
 /// The raw points of one pen stroke, from mouse down to mouse up.
@@ -153,10 +249,84 @@ pub fn smooth_path(points: &[Point]) -> Vec<PathSegment> {
 mod tests {
     use super::*;
 
-    fn segment_end(segment: &PathSegment) -> Point {
-        match segment {
-            PathSegment::Line { to } | PathSegment::Quadratic { to, .. } => *to,
+    fn drawn(shape: StrokeShape, width_px: f32) -> DrawnStroke {
+        DrawnStroke {
+            shape,
+            pen: PenSettings {
+                width_px,
+                ..crate::config::DEFAULT_PEN
+            },
         }
+    }
+
+    fn horizontal_line(y: f32) -> StrokeShape {
+        StrokeShape::Path {
+            start: Point::new(0.0, y),
+            segments: vec![PathSegment::Line {
+                to: Point::new(100.0, y),
+            }],
+        }
+    }
+
+    #[test]
+    fn eraser_on_line_touches_it() {
+        let line = drawn(horizontal_line(50.0), 10.0);
+        assert!(line.is_touched_by(Point::new(40.0, 50.0)));
+    }
+
+    #[test]
+    fn eraser_reaches_past_edge_of_thick_line_but_not_far() {
+        let line = drawn(horizontal_line(50.0), 10.0);
+        // Edge is at 5 px from the centre; reach adds a few pixels more.
+        assert!(line.is_touched_by(Point::new(40.0, 58.0)));
+        assert!(!line.is_touched_by(Point::new(40.0, 70.0)));
+    }
+
+    #[test]
+    fn eraser_past_line_end_misses() {
+        let line = drawn(horizontal_line(50.0), 4.0);
+        assert!(!line.is_touched_by(Point::new(130.0, 50.0)));
+    }
+
+    #[test]
+    fn eraser_follows_curves() {
+        // The curve bulges up toward its control point: its middle is at
+        // y = 25, far from the straight line between its ends (y = 0).
+        let curve = drawn(
+            StrokeShape::Path {
+                start: Point::new(0.0, 0.0),
+                segments: vec![PathSegment::Quadratic {
+                    control: Point::new(50.0, 50.0),
+                    to: Point::new(100.0, 0.0),
+                }],
+            },
+            4.0,
+        );
+        assert!(curve.is_touched_by(Point::new(50.0, 25.0)));
+        assert!(!curve.is_touched_by(Point::new(50.0, 2.0)));
+    }
+
+    #[test]
+    fn eraser_touches_dots() {
+        let dot = drawn(
+            StrokeShape::Dot {
+                center: Point::new(10.0, 10.0),
+            },
+            6.0,
+        );
+        assert!(dot.is_touched_by(Point::new(12.0, 12.0)));
+        assert!(!dot.is_touched_by(Point::new(30.0, 30.0)));
+    }
+
+    #[test]
+    fn eraser_picks_most_recent_of_overlapping_strokes() {
+        let strokes = [
+            drawn(horizontal_line(50.0), 10.0),
+            drawn(horizontal_line(52.0), 10.0),
+            drawn(horizontal_line(300.0), 10.0),
+        ];
+        assert_eq!(topmost_stroke_at(&strokes, Point::new(20.0, 51.0)), Some(1));
+        assert_eq!(topmost_stroke_at(&strokes, Point::new(20.0, 150.0)), None);
     }
 
     #[test]

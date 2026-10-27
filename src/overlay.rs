@@ -2,7 +2,8 @@
 //! message handling.
 //!
 //! The overlay is click-through by default. While Ctrl is held (or a stroke
-//! is in progress) it captures the mouse so the user can draw. This module
+//! or erase is in progress) it captures the mouse so the user can draw with
+//! the left button and erase whole strokes with the right one. This module
 //! wires input to strokes, strokes to the renderer, and tray menu and
 //! toolbar picks to pen settings; the drawing itself lives in `renderer`,
 //! the stroke maths in `stroke`, and the controls in `tray` and `toolbar`.
@@ -22,8 +23,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
     SW_SHOWNOACTIVATE, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow,
     WM_CAPTURECHANGED, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{Result, w};
 
@@ -31,7 +33,7 @@ use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
-use crate::stroke::{Point, Stroke};
+use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
 use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
 
@@ -70,6 +72,8 @@ pub fn create_overlay() -> Result<HWND> {
             tray_icon,
             toolbar,
             pen: DEFAULT_PEN,
+            drawn_strokes: Vec::new(),
+            is_erasing: false,
             active_stroke: None,
             is_ctrl_held: false,
         })
@@ -164,6 +168,11 @@ struct OverlayState {
     toolbar: Toolbar,
     /// The pen used for new strokes, as last picked in the tray menu.
     pen: PenSettings,
+    /// Every finished stroke on screen, oldest first. Kept so a single
+    /// stroke can be erased and the rest redrawn.
+    drawn_strokes: Vec<DrawnStroke>,
+    /// True from Ctrl+right-button down until the right button is released.
+    is_erasing: bool,
     /// The stroke being drawn right now, from mouse down to mouse up.
     active_stroke: Option<Stroke>,
     is_ctrl_held: bool,
@@ -190,6 +199,10 @@ impl OverlayState {
     }
 
     fn on_mouse_move(&mut self, point: Point) {
+        if self.is_erasing {
+            self.erase_at(point);
+            return;
+        }
         match &mut self.active_stroke {
             Some(stroke) => {
                 stroke.add_point(point);
@@ -213,16 +226,69 @@ impl OverlayState {
     /// Moves the active stroke into the permanent drawing.
     fn finish_stroke(&mut self) {
         if let Some(stroke) = self.active_stroke.take() {
-            if let Err(error) = self.renderer.add_finished_stroke(&stroke.shape()) {
-                log_error("saving finished stroke", &error);
+            let shape = stroke.shape();
+            match self.renderer.add_finished_stroke(&shape) {
+                Ok(()) => self.drawn_strokes.push(DrawnStroke {
+                    shape,
+                    pen: self.pen,
+                }),
+                Err(error) => log_error("saving finished stroke", &error),
             }
             self.request_redraw();
         }
         self.update_click_through();
     }
 
+    /// Ctrl+right button down: start erasing, beginning at `point`.
+    fn on_right_mouse_down(&mut self, point: Point) {
+        if !is_ctrl_physically_held() {
+            self.on_ctrl_state_changed(false);
+            return;
+        }
+        if self.active_stroke.is_some() {
+            return; // already drawing with the left button
+        }
+        self.is_erasing = true;
+        // SAFETY: plain Win32 call on our own valid window. Capture keeps
+        // mouse messages coming even if the cursor leaves the overlay.
+        unsafe { SetCapture(self.window) };
+        self.erase_at(point);
+    }
+
+    fn on_right_mouse_up(&mut self) {
+        // A right click during a left-button stroke must not end its capture.
+        if !self.is_erasing {
+            return;
+        }
+        self.is_erasing = false;
+        self.update_click_through();
+        // SAFETY: plain Win32 call. It re-enters `window_proc` with
+        // WM_CAPTURECHANGED, which then sees the state as busy and is ignored.
+        let _ = unsafe { ReleaseCapture() };
+    }
+
+    /// Another window took the mouse: keep what was drawn, stop erasing.
+    fn on_capture_lost(&mut self) {
+        self.is_erasing = false;
+        self.finish_stroke();
+    }
+
+    /// Erases the most recent stroke under `point`, if any, and redraws
+    /// the remaining ones.
+    fn erase_at(&mut self, point: Point) {
+        let Some(index) = topmost_stroke_at(&self.drawn_strokes, point) else {
+            return;
+        };
+        self.drawn_strokes.remove(index);
+        if let Err(error) = self.renderer.redraw_finished_strokes(&self.drawn_strokes) {
+            log_error("erasing stroke", &error);
+        }
+        self.request_redraw();
+    }
+
     fn clear_drawing(&mut self) {
         self.active_stroke = None;
+        self.drawn_strokes.clear();
         if let Err(error) = self.renderer.clear_finished_strokes() {
             log_error("clearing drawing", &error);
         }
@@ -284,10 +350,11 @@ impl OverlayState {
         }
     }
 
-    /// The overlay takes the mouse only while Ctrl is held or a stroke is
-    /// still in progress (so releasing Ctrl mid-drag doesn't cut the line).
+    /// The overlay takes the mouse only while Ctrl is held or a stroke or
+    /// erase is still in progress (so releasing Ctrl mid-drag doesn't cut
+    /// it short).
     fn update_click_through(&self) {
-        let wants_mouse = self.is_ctrl_held || self.active_stroke.is_some();
+        let wants_mouse = self.is_ctrl_held || self.active_stroke.is_some() || self.is_erasing;
         set_click_through(self.window, !wants_mouse);
     }
 
@@ -310,8 +377,9 @@ unsafe extern "system" fn window_proc(
         WM_LBUTTONDOWN => with_state(|state| state.on_mouse_down(point_from_lparam(lparam))),
         WM_MOUSEMOVE => with_state(|state| state.on_mouse_move(point_from_lparam(lparam))),
         WM_LBUTTONUP => with_state(|state| state.on_mouse_up(point_from_lparam(lparam))),
-        // Another window took the mouse mid-stroke: keep what was drawn.
-        WM_CAPTURECHANGED => with_state(OverlayState::finish_stroke),
+        WM_RBUTTONDOWN => with_state(|state| state.on_right_mouse_down(point_from_lparam(lparam))),
+        WM_RBUTTONUP => with_state(OverlayState::on_right_mouse_up),
+        WM_CAPTURECHANGED => with_state(OverlayState::on_capture_lost),
         WM_PAINT => {
             let painted = with_state(|state| state.paint());
             // SAFETY: plain Win32 call; marks the window as painted so

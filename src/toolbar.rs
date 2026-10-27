@@ -1,5 +1,6 @@
 //! The small floating toolbar: drag it anywhere to move it, pick the pen
-//! colour, thickness and opacity, clear the drawing, or hide it.
+//! colour, thickness and opacity, clear the drawing, or hide it. A short
+//! hint at the bottom explains how to draw and erase.
 //!
 //! The toolbar only draws itself and posts [`WM_TOOLBAR_COMMAND`] to its
 //! owner (the overlay). It never changes pen settings or strokes directly.
@@ -10,10 +11,16 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D_SIZE_U, D2D1_COLOR_F};
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
-    D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINE_JOIN_ROUND, D2D1_PRESENT_OPTIONS_NONE,
-    D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1_STROKE_STYLE_PROPERTIES,
-    D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush, ID2D1StrokeStyle,
+    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_ELLIPSE,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_LINE_JOIN_ROUND,
+    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT,
+    D2D1_STROKE_STYLE_PROPERTIES, D2D1CreateFactory, ID2D1Factory, ID2D1HwndRenderTarget,
+    ID2D1SolidColorBrush, ID2D1StrokeStyle,
+};
+use windows::Win32::Graphics::DirectWrite::{
+    DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT_CENTER, DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
 };
 use windows::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
@@ -27,8 +34,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW,
     SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
     SetLayeredWindowAttributes, SetWindowPos, ShowWindow, WM_APP, WM_DESTROY, WM_DPICHANGED,
-    WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT,
-    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Result, w};
 use windows_numerics::Vector2;
@@ -54,6 +61,11 @@ const WINDOW_OPACITY: u8 = 235;
 /// Gap between the top of the primary screen and the toolbar at start.
 const START_TOP_MARGIN: f32 = 12.0;
 
+/// How to draw and erase, shown under the buttons.
+const HINT_TEXT: &str = "Ctrl + drag  \u{2192}  draw\nCtrl + right-click  \u{2192}  erase";
+const HINT_FONT: windows::core::PCWSTR = w!("Segoe UI");
+const HINT_FONT_SIZE: f32 = 10.5;
+
 const HIGHLIGHT_CORNER_RADIUS: f32 = 6.0;
 const ICON_LINE_WIDTH: f32 = 1.6;
 const SWATCH_RADIUS: f32 = 8.0;
@@ -72,6 +84,7 @@ const HOVER_COLOR: D2D1_COLOR_F = gray(0.24);
 const OPEN_PICKER_COLOR: D2D1_COLOR_F = gray(0.3);
 const ICON_COLOR: D2D1_COLOR_F = gray(0.86);
 const GRIP_COLOR: D2D1_COLOR_F = gray(0.5);
+const HINT_COLOR: D2D1_COLOR_F = gray(0.58);
 /// Outline around colour swatches, so dark colours stay visible.
 const SWATCH_OUTLINE_COLOR: D2D1_COLOR_F = gray(0.45);
 const SELECTED_RING_COLOR: D2D1_COLOR_F = gray(1.0);
@@ -141,6 +154,9 @@ struct ToolbarState {
     owner: HWND,
     factory: ID2D1Factory,
     icon_line_style: ID2D1StrokeStyle,
+    hint_format: IDWriteTextFormat,
+    /// [`HINT_TEXT`] as UTF-16, the form DirectWrite draws.
+    hint_text: Vec<u16>,
     /// Created on first paint, dropped after a drawing error.
     graphics: Option<Graphics>,
     layout: ToolbarLayout,
@@ -163,6 +179,8 @@ impl ToolbarState {
             owner,
             factory,
             icon_line_style,
+            hint_format: create_hint_format()?,
+            hint_text: HINT_TEXT.encode_utf16().collect(),
             graphics: None,
             layout: ToolbarLayout::new(None),
             hovered: None,
@@ -415,6 +433,12 @@ impl ToolbarState {
         if let Some(picker) = self.layout.open_picker {
             self.draw_choices(&painter, picker);
         }
+        painter.text(
+            &self.hint_text,
+            &self.hint_format,
+            self.layout.hint_rect(),
+            HINT_COLOR,
+        );
     }
 
     fn draw_button_icon(&self, painter: &Painter, button: ToolbarButton, center: (f32, f32)) {
@@ -525,15 +549,26 @@ impl Painter<'_> {
         };
     }
 
+    fn text(&self, text: &[u16], format: &IDWriteTextFormat, rect: Rect, color: D2D1_COLOR_F) {
+        self.use_color(color);
+        // SAFETY: plain COM call between BeginDraw and EndDraw; `text`
+        // and the rectangle outlive it.
+        unsafe {
+            self.graphics.target.DrawText(
+                text,
+                format,
+                &to_d2d_rect(rect),
+                &self.graphics.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+                DWRITE_MEASURING_MODE_NATURAL,
+            )
+        };
+    }
+
     fn fill_rounded_rect(&self, rect: Rect, color: D2D1_COLOR_F) {
         self.use_color(color);
         let rounded = D2D1_ROUNDED_RECT {
-            rect: D2D_RECT_F {
-                left: rect.left,
-                top: rect.top,
-                right: rect.right,
-                bottom: rect.bottom,
-            },
+            rect: to_d2d_rect(rect),
             radiusX: HIGHLIGHT_CORNER_RADIUS,
             radiusY: HIGHLIGHT_CORNER_RADIUS,
         };
@@ -576,6 +611,26 @@ fn draw_hide_icon(painter: &Painter, (x, y): (f32, f32)) {
 fn width_preview_radius(width_px: f32) -> f32 {
     let (smallest, largest) = WIDTH_PREVIEW_RADIUS_RANGE;
     (width_px / 2.0).clamp(smallest, largest)
+}
+
+/// Small, centred text for the hint.
+fn create_hint_format() -> Result<IDWriteTextFormat> {
+    // SAFETY: plain DirectWrite calls with valid, null-terminated strings.
+    unsafe {
+        let factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+        let format = factory.CreateTextFormat(
+            HINT_FONT,
+            None,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            HINT_FONT_SIZE,
+            w!("en-us"),
+        )?;
+        format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+        format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+        Ok(format)
+    }
 }
 
 fn create_toolbar_window(owner: HWND) -> Result<HWND> {
@@ -719,6 +774,15 @@ fn rgb([red, green, blue]: [f32; 3], alpha: f32) -> D2D1_COLOR_F {
         g: green,
         b: blue,
         a: alpha,
+    }
+}
+
+fn to_d2d_rect(rect: Rect) -> D2D_RECT_F {
+    D2D_RECT_F {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
     }
 }
 

@@ -45,7 +45,7 @@ use windows_numerics::Vector2;
 
 use crate::chalk::{self, GRAIN_TEXTURE_SIZE_PX};
 use crate::config::PenSettings;
-use crate::stroke::{PathSegment, Point, StrokeShape};
+use crate::stroke::{DrawnStroke, PathSegment, Point, StrokeShape};
 
 /// Direct2D's default DPI. Using it everywhere means 1 DIP == 1 pixel.
 const PIXEL_EXACT_DPI: f32 = 96.0;
@@ -73,7 +73,8 @@ pub struct Renderer {
     chalk_brush: ID2D1BitmapBrush1,
     /// Grain coverage per texture pixel, kept to re-tint on colour changes.
     grain_alpha: Vec<u8>,
-    pen_width_px: f32,
+    /// The pen `chalk_brush` was made for.
+    brush_pen: PenSettings,
     pen_style: ID2D1StrokeStyle1,
     // Composition objects are never used after setup, but releasing them
     // would remove the content from the window, so they must stay alive.
@@ -125,7 +126,7 @@ impl Renderer {
             composition_target.SetRoot(&composition_visual)?;
             composition_device.Commit()?;
 
-            let renderer = Self {
+            let mut renderer = Self {
                 factory,
                 context,
                 swap_chain,
@@ -133,7 +134,7 @@ impl Renderer {
                 finished_strokes,
                 chalk_brush,
                 grain_alpha,
-                pen_width_px: pen.width_px,
+                brush_pen: *pen,
                 pen_style,
                 _composition_device: composition_device,
                 _composition_target: composition_target,
@@ -174,18 +175,42 @@ impl Renderer {
     /// Draws every following stroke with `pen`. Strokes already finished
     /// keep the look they were drawn with.
     pub fn set_pen(&mut self, pen: &PenSettings) -> Result<()> {
+        // Re-tinting the texture is the costly part, so skip it when the
+        // pen did not actually change (common while redrawing strokes).
+        if *pen == self.brush_pen {
+            return Ok(());
+        }
         self.chalk_brush = create_chalk_brush(&self.context, &self.grain_alpha, pen)?;
-        self.pen_width_px = pen.width_px;
+        self.brush_pen = *pen;
         Ok(())
     }
 
-    /// Permanently adds a finished stroke to the cached drawing.
-    pub fn add_finished_stroke(&self, shape: &StrokeShape) -> Result<()> {
+    /// Permanently adds a finished stroke to the cached drawing, using the
+    /// current pen.
+    pub fn add_finished_stroke(&mut self, shape: &StrokeShape) -> Result<()> {
         self.draw_into_finished_strokes(|renderer| renderer.draw_shape(shape))
     }
 
+    /// Replaces the cached drawing with exactly `strokes`, oldest first,
+    /// each with its own pen. Used after erasing a stroke. The current pen
+    /// is restored afterwards.
+    pub fn redraw_finished_strokes(&mut self, strokes: &[DrawnStroke]) -> Result<()> {
+        let current_pen = self.brush_pen;
+        let drawn = self.draw_into_finished_strokes(|renderer| {
+            // SAFETY: called between BeginDraw and EndDraw.
+            unsafe { renderer.context.Clear(Some(&TRANSPARENT)) };
+            for stroke in strokes {
+                renderer.set_pen(&stroke.pen)?;
+                renderer.draw_shape(&stroke.shape)?;
+            }
+            Ok(())
+        });
+        self.set_pen(&current_pen)?;
+        drawn
+    }
+
     /// Erases every finished stroke.
-    pub fn clear_finished_strokes(&self) -> Result<()> {
+    pub fn clear_finished_strokes(&mut self) -> Result<()> {
         self.draw_into_finished_strokes(|renderer| {
             // SAFETY: called between BeginDraw and EndDraw.
             unsafe { renderer.context.Clear(Some(&TRANSPARENT)) };
@@ -193,7 +218,10 @@ impl Renderer {
         })
     }
 
-    fn draw_into_finished_strokes(&self, draw: impl FnOnce(&Self) -> Result<()>) -> Result<()> {
+    fn draw_into_finished_strokes(
+        &mut self,
+        draw: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
         // SAFETY: plain COM calls; BeginDraw/EndDraw are always paired.
         unsafe {
             self.context.SetTarget(&self.finished_strokes);
@@ -208,7 +236,7 @@ impl Renderer {
     fn draw_shape(&self, shape: &StrokeShape) -> Result<()> {
         match shape {
             StrokeShape::Dot { center } => {
-                let radius = self.pen_width_px / 2.0;
+                let radius = self.brush_pen.width_px / 2.0;
                 let dot = D2D1_ELLIPSE {
                     point: to_d2d_point(*center),
                     radiusX: radius,
@@ -246,7 +274,7 @@ impl Renderer {
             self.context.DrawGeometry(
                 &geometry,
                 &self.chalk_brush,
-                self.pen_width_px,
+                self.brush_pen.width_px,
                 &self.pen_style,
             );
         }

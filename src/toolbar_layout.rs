@@ -5,8 +5,9 @@
 //! in device-independent pixels (DIPs); the toolbar window scales them to
 //! the monitor's DPI.
 //!
-//! Layout: a main row with a drag grip and the buttons, plus, while a
-//! picker is open, a second row with that picker's choices.
+//! Layout: a main row with a drag grip and the buttons; while a picker is
+//! open, a row with that picker's choices; and at the bottom a small
+//! two-line hint on how to draw and erase.
 
 use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, WIDTH_CHOICES};
 
@@ -21,6 +22,11 @@ const GROUP_GAP: f32 = 8.0;
 const ROW_GAP: f32 = 4.0;
 const CHOICE_SIZE: f32 = 26.0;
 const CHOICE_GAP: f32 = 2.0;
+/// Room for the two lines of hint text.
+const HINT_HEIGHT: f32 = 28.0;
+const HINT_BOTTOM_PADDING: f32 = 4.0;
+/// The hint text must fit even if the buttons ever get fewer.
+const HINT_MIN_WIDTH: f32 = 160.0;
 
 /// An axis-aligned rectangle in DIPs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,13 +140,29 @@ impl ToolbarLayout {
     /// Total toolbar size as (width, height).
     pub fn size(&self) -> (f32, f32) {
         let main_row_width = self.main_row_right() + PADDING;
-        let main_row_height = PADDING + BUTTON_SIZE + PADDING;
-        let Some(picker) = self.open_picker else {
-            return (main_row_width, main_row_height);
-        };
-        let choices_width = PADDING + choices_span(picker.choice_count()) + PADDING;
-        let height = main_row_height + ROW_GAP + CHOICE_SIZE;
-        (main_row_width.max(choices_width), height)
+        let choices_width = self.open_picker.map_or(0.0, |picker| {
+            PADDING + choices_span(picker.choice_count()) + PADDING
+        });
+        let hint_width = PADDING + HINT_MIN_WIDTH + PADDING;
+        let width = main_row_width.max(choices_width).max(hint_width);
+        let height = self.hint_top() + HINT_HEIGHT + HINT_BOTTOM_PADDING;
+        (width, height)
+    }
+
+    /// The hint text at the bottom. It is background: dragging it moves
+    /// the toolbar.
+    pub fn hint_rect(&self) -> Rect {
+        let (width, _) = self.size();
+        Rect::from_size(PADDING, self.hint_top(), width - 2.0 * PADDING, HINT_HEIGHT)
+    }
+
+    /// The hint sits under the main row, or under the choices if open.
+    fn hint_top(&self) -> f32 {
+        let main_row_bottom = PADDING + BUTTON_SIZE + PADDING;
+        match self.open_picker {
+            Some(_) => main_row_bottom + ROW_GAP + CHOICE_SIZE + ROW_GAP,
+            None => main_row_bottom,
+        }
     }
 
     /// The dotted drag grip at the left of the main row.
@@ -257,7 +279,10 @@ mod tests {
         let first_choice = ToolbarLayout::new(Some(Picker::Width))
             .choice_rect(0)
             .expect("width picker has choices");
-        assert!(first_choice.top >= closed.1 - PADDING);
+        let button_bottom = ToolbarLayout::new(None)
+            .button_rect(ToolbarButton::Width)
+            .bottom;
+        assert!(first_choice.top > button_bottom);
     }
 
     #[test]
@@ -281,6 +306,29 @@ mod tests {
         let last_index = Picker::Color.choice_count() - 1;
         let last_swatch = layout.choice_rect(last_index).expect("swatch");
         assert!(layout.size().0 >= last_swatch.right + PADDING);
+    }
+
+    #[test]
+    fn hint_sits_below_buttons_and_inside_toolbar() {
+        let layout = ToolbarLayout::new(None);
+        let hint = layout.hint_rect();
+        let (width, height) = layout.size();
+        assert!(hint.top >= layout.button_rect(ToolbarButton::Color).bottom);
+        assert!(hint.right <= width && hint.bottom <= height);
+    }
+
+    #[test]
+    fn hint_moves_below_open_choices() {
+        let layout = ToolbarLayout::new(Some(Picker::Color));
+        let last_choice = layout.choice_rect(0).expect("colour choices");
+        assert!(layout.hint_rect().top >= last_choice.bottom);
+    }
+
+    #[test]
+    fn hint_is_background_so_it_drags() {
+        let layout = ToolbarLayout::new(None);
+        let (x, y) = layout.hint_rect().center();
+        assert_eq!(layout.hit_test(x, y), ToolbarHit::Background);
     }
 
     #[test]
