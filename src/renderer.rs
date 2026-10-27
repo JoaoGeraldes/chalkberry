@@ -3,8 +3,10 @@
 //! Pipeline: Direct3D 11 device → DXGI swap chain with premultiplied alpha →
 //! DirectComposition visual on the overlay window → Direct2D draws into it.
 //!
-//! Finished strokes are drawn once into a cached bitmap, so each frame only
-//! redraws the stroke in progress. This module knows nothing about input.
+//! Strokes are painted with a tiling chalk-grain bitmap brush, with
+//! anti-aliased edges. Finished strokes are drawn once into a cached
+//! bitmap, so each frame only redraws the stroke in progress. This module
+//! knows nothing about input or menus.
 
 use std::mem::ManuallyDrop;
 
@@ -14,12 +16,14 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_OPTIONS, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET,
+    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_BITMAP_BRUSH_PROPERTIES1, D2D1_BITMAP_OPTIONS,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_OPTIONS_TARGET,
     D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
-    D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_LINE_JOIN_ROUND, D2D1_QUADRATIC_BEZIER_SEGMENT,
-    D2D1_STROKE_STYLE_PROPERTIES1, D2D1_STROKE_TRANSFORM_TYPE_NORMAL, D2D1CreateFactory,
-    ID2D1Bitmap1, ID2D1DeviceContext, ID2D1Factory1, ID2D1SolidColorBrush, ID2D1StrokeStyle1,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_ELLIPSE, D2D1_EXTEND_MODE_WRAP,
+    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+    D2D1_LINE_JOIN_ROUND, D2D1_QUADRATIC_BEZIER_SEGMENT, D2D1_STROKE_STYLE_PROPERTIES1,
+    D2D1_STROKE_TRANSFORM_TYPE_NORMAL, D2D1CreateFactory, ID2D1Bitmap1, ID2D1BitmapBrush1,
+    ID2D1DeviceContext, ID2D1Factory1, ID2D1StrokeStyle1,
 };
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
@@ -39,11 +43,15 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::core::{Interface, Result};
 use windows_numerics::Vector2;
 
-use crate::config::{PEN_COLOR_RGB, PEN_OPACITY, PEN_WIDTH_PX};
+use crate::chalk::{self, GRAIN_TEXTURE_SIZE_PX};
+use crate::config::PenSettings;
 use crate::stroke::{PathSegment, Point, StrokeShape};
 
 /// Direct2D's default DPI. Using it everywhere means 1 DIP == 1 pixel.
 const PIXEL_EXACT_DPI: f32 = 96.0;
+
+/// Blue, green, red, alpha: one byte each.
+const BYTES_PER_PIXEL: u32 = 4;
 
 const TRANSPARENT: D2D1_COLOR_F = D2D1_COLOR_F {
     r: 0.0,
@@ -61,7 +69,11 @@ pub struct Renderer {
     back_buffer: ID2D1Bitmap1,
     /// All finished strokes, so they are not re-drawn every frame.
     finished_strokes: ID2D1Bitmap1,
-    pen_brush: ID2D1SolidColorBrush,
+    /// Paints the chalk grain in the pen colour and opacity.
+    chalk_brush: ID2D1BitmapBrush1,
+    /// Grain coverage per texture pixel, kept to re-tint on colour changes.
+    grain_alpha: Vec<u8>,
+    pen_width_px: f32,
     pen_style: ID2D1StrokeStyle1,
     // Composition objects are never used after setup, but releasing them
     // would remove the content from the window, so they must stay alive.
@@ -71,8 +83,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Creates the drawing pipeline for `window`, sized `width` × `height` pixels.
-    pub fn new(window: HWND, width: u32, height: u32) -> Result<Self> {
+    /// Creates the drawing pipeline for `window`, sized `width` × `height`
+    /// pixels, drawing with `pen`.
+    pub fn new(window: HWND, width: u32, height: u32, pen: &PenSettings) -> Result<Self> {
         let d3d_device = create_d3d_device()?;
         let dxgi_device: IDXGIDevice = d3d_device.cast()?;
         let swap_chain = create_swap_chain(&dxgi_device, width, height)?;
@@ -84,27 +97,25 @@ impl Renderer {
             let context = factory
                 .CreateDevice(&dxgi_device)?
                 .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?;
+            // Soft, anti-aliased stroke edges instead of jagged pixel steps.
+            context.SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
             let back_buffer_surface: IDXGISurface = swap_chain.GetBuffer(0)?;
             let back_buffer = context.CreateBitmapFromDxgiSurface(
                 &back_buffer_surface,
-                Some(&target_bitmap_properties(D2D1_BITMAP_OPTIONS_CANNOT_DRAW)),
+                Some(&bitmap_properties(
+                    D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                )),
             )?;
             let finished_strokes = context.CreateBitmap(
                 D2D_SIZE_U { width, height },
                 None,
                 0,
-                &target_bitmap_properties(D2D1_BITMAP_OPTIONS::default()),
+                &bitmap_properties(D2D1_BITMAP_OPTIONS_TARGET),
             )?;
 
-            let [red, green, blue] = PEN_COLOR_RGB;
-            let pen_color = D2D1_COLOR_F {
-                r: red,
-                g: green,
-                b: blue,
-                a: PEN_OPACITY,
-            };
-            let pen_brush = context.CreateSolidColorBrush(&pen_color, None)?;
+            let grain_alpha = chalk::grain_alpha_texture();
+            let chalk_brush = create_chalk_brush(&context, &grain_alpha, pen)?;
             let pen_style = factory.CreateStrokeStyle(&round_pen_style(), None)?;
 
             let composition_device: IDCompositionDevice = DCompositionCreateDevice(&dxgi_device)?;
@@ -120,7 +131,9 @@ impl Renderer {
                 swap_chain,
                 back_buffer,
                 finished_strokes,
-                pen_brush,
+                chalk_brush,
+                grain_alpha,
+                pen_width_px: pen.width_px,
                 pen_style,
                 _composition_device: composition_device,
                 _composition_target: composition_target,
@@ -158,6 +171,14 @@ impl Renderer {
         }
     }
 
+    /// Draws every following stroke with `pen`. Strokes already finished
+    /// keep the look they were drawn with.
+    pub fn set_pen(&mut self, pen: &PenSettings) -> Result<()> {
+        self.chalk_brush = create_chalk_brush(&self.context, &self.grain_alpha, pen)?;
+        self.pen_width_px = pen.width_px;
+        Ok(())
+    }
+
     /// Permanently adds a finished stroke to the cached drawing.
     pub fn add_finished_stroke(&self, shape: &StrokeShape) -> Result<()> {
         self.draw_into_finished_strokes(|renderer| renderer.draw_shape(shape))
@@ -187,14 +208,14 @@ impl Renderer {
     fn draw_shape(&self, shape: &StrokeShape) -> Result<()> {
         match shape {
             StrokeShape::Dot { center } => {
-                let radius = PEN_WIDTH_PX / 2.0;
+                let radius = self.pen_width_px / 2.0;
                 let dot = D2D1_ELLIPSE {
                     point: to_d2d_point(*center),
                     radiusX: radius,
                     radiusY: radius,
                 };
                 // SAFETY: plain COM call on valid objects.
-                unsafe { self.context.FillEllipse(&dot, &self.pen_brush) };
+                unsafe { self.context.FillEllipse(&dot, &self.chalk_brush) };
                 Ok(())
             }
             StrokeShape::Path { start, segments } => self.draw_path(*start, segments),
@@ -222,8 +243,12 @@ impl Renderer {
             sink.Close()?;
             // Drawing the whole stroke as one geometry means places where it
             // crosses itself are not painted twice, so translucent pens stay even.
-            self.context
-                .DrawGeometry(&geometry, &self.pen_brush, PEN_WIDTH_PX, &self.pen_style);
+            self.context.DrawGeometry(
+                &geometry,
+                &self.chalk_brush,
+                self.pen_width_px,
+                &self.pen_style,
+            );
         }
         Ok(())
     }
@@ -276,7 +301,41 @@ fn create_swap_chain(
     }
 }
 
-fn target_bitmap_properties(extra_options: D2D1_BITMAP_OPTIONS) -> D2D1_BITMAP_PROPERTIES1 {
+/// Creates a brush that paints the chalk grain, tiled across the screen,
+/// in the pen's colour and opacity.
+fn create_chalk_brush(
+    context: &ID2D1DeviceContext,
+    grain_alpha: &[u8],
+    pen: &PenSettings,
+) -> Result<ID2D1BitmapBrush1> {
+    let pixels = chalk::tinted_texture_bgra(grain_alpha, pen.color_rgb);
+    let texture_size = D2D_SIZE_U {
+        width: GRAIN_TEXTURE_SIZE_PX,
+        height: GRAIN_TEXTURE_SIZE_PX,
+    };
+    let brush_properties = D2D1_BITMAP_BRUSH_PROPERTIES1 {
+        // Repeat the texture in every direction to cover any stroke.
+        extendModeX: D2D1_EXTEND_MODE_WRAP,
+        extendModeY: D2D1_EXTEND_MODE_WRAP,
+        // Texture pixels land exactly on screen pixels, so no filtering.
+        interpolationMode: D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+    };
+    // SAFETY: `pixels` holds exactly size × size BGRA pixels and outlives
+    // CreateBitmap, which copies them. `brush_properties` outlives its call.
+    unsafe {
+        let texture = context.CreateBitmap(
+            texture_size,
+            Some(pixels.as_ptr().cast()),
+            GRAIN_TEXTURE_SIZE_PX * BYTES_PER_PIXEL,
+            &bitmap_properties(D2D1_BITMAP_OPTIONS_NONE),
+        )?;
+        let brush = context.CreateBitmapBrush(&texture, Some(&raw const brush_properties), None)?;
+        brush.SetOpacity(pen.opacity.clamp(0.0, 1.0));
+        Ok(brush)
+    }
+}
+
+fn bitmap_properties(options: D2D1_BITMAP_OPTIONS) -> D2D1_BITMAP_PROPERTIES1 {
     D2D1_BITMAP_PROPERTIES1 {
         pixelFormat: D2D1_PIXEL_FORMAT {
             format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -284,7 +343,7 @@ fn target_bitmap_properties(extra_options: D2D1_BITMAP_OPTIONS) -> D2D1_BITMAP_P
         },
         dpiX: PIXEL_EXACT_DPI,
         dpiY: PIXEL_EXACT_DPI,
-        bitmapOptions: D2D1_BITMAP_OPTIONS_TARGET | extra_options,
+        bitmapOptions: options,
         colorContext: ManuallyDrop::new(None),
     }
 }

@@ -7,11 +7,13 @@
 // `eprintln!` messages are visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chalk;
 mod config;
 mod input;
 mod overlay;
 mod renderer;
 mod stroke;
+mod tray;
 
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,

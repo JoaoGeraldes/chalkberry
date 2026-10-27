@@ -3,8 +3,9 @@
 //!
 //! The overlay is click-through by default. While Ctrl is held (or a stroke
 //! is in progress) it captures the mouse so the user can draw. This module
-//! wires input to strokes and strokes to the renderer; the drawing itself
-//! lives in `renderer`, and the stroke maths in `stroke`.
+//! wires input to strokes, strokes to the renderer, and tray menu picks to
+//! pen settings; the drawing itself lives in `renderer`, the stroke maths
+//! in `stroke`, and the menu in `tray`.
 
 use std::cell::RefCell;
 
@@ -26,10 +27,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Result, w};
 
-use crate::config::{CLEAR_HOTKEY_LETTER, QUIT_HOTKEY_LETTER};
+use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
 use crate::stroke::{Point, Stroke};
+use crate::tray::{self, MenuCommand, TrayIcon, WM_TRAY_ICON};
 
 const CLEAR_HOTKEY_ID: i32 = 1;
 const QUIT_HOTKEY_ID: i32 = 2;
@@ -42,16 +44,25 @@ thread_local! {
     static OVERLAY_STATE: RefCell<Option<OverlayState>> = const { RefCell::new(None) };
 }
 
-/// Creates the overlay covering every monitor, shows it, and registers the
-/// clear/quit hotkeys. Returns the window so other modules can target it.
+/// Creates the overlay covering every monitor, shows it with its tray
+/// icon, and registers the clear/quit hotkeys. Returns the window so other
+/// modules can target it.
 pub fn create_overlay() -> Result<HWND> {
     let window = create_overlay_window()?;
     let (width, height) = virtual_screen_size();
-    let renderer = Renderer::new(window, width, height)?;
+    let renderer = Renderer::new(window, width, height, &DEFAULT_PEN)?;
+    let tray_icon = TrayIcon::new(window)?;
+    // Not fatal: right after login the taskbar may not exist yet. The icon
+    // is added again when the taskbar announces itself.
+    if let Err(error) = tray_icon.show() {
+        log_error("adding tray icon", &error);
+    }
     OVERLAY_STATE.with(|cell| {
         *cell.borrow_mut() = Some(OverlayState {
             window,
             renderer,
+            tray_icon,
+            pen: DEFAULT_PEN,
             active_stroke: None,
             is_ctrl_held: false,
         })
@@ -139,6 +150,10 @@ fn register_hotkeys(window: HWND) -> Result<()> {
 struct OverlayState {
     window: HWND,
     renderer: Renderer,
+    /// Removed from the taskbar when the state is dropped (on WM_DESTROY).
+    tray_icon: TrayIcon,
+    /// The pen used for new strokes, as last picked in the tray menu.
+    pen: PenSettings,
     /// The stroke being drawn right now, from mouse down to mouse up.
     active_stroke: Option<Stroke>,
     is_ctrl_held: bool,
@@ -175,7 +190,10 @@ impl OverlayState {
         }
     }
 
-    fn on_mouse_up(&mut self) {
+    fn on_mouse_up(&mut self, point: Point) {
+        if let Some(stroke) = &mut self.active_stroke {
+            stroke.end(point);
+        }
         self.finish_stroke();
         // SAFETY: plain Win32 call. It re-enters `window_proc` with
         // WM_CAPTURECHANGED, which then sees the state as busy and is ignored.
@@ -199,6 +217,37 @@ impl OverlayState {
             log_error("clearing drawing", &error);
         }
         self.request_redraw();
+    }
+
+    /// Applies a tray menu pick. `Quit` is not handled here: destroying the
+    /// window must happen outside the state borrow (see `destroy_overlay`).
+    fn apply_menu_command(&mut self, command: MenuCommand) {
+        let mut pen = self.pen;
+        match command {
+            MenuCommand::SetColor(color_rgb) => pen.color_rgb = color_rgb,
+            MenuCommand::SetWidth(width_px) => pen.width_px = width_px,
+            MenuCommand::SetOpacity(opacity) => pen.opacity = opacity,
+            MenuCommand::ClearDrawing => {
+                self.clear_drawing();
+                return;
+            }
+            MenuCommand::Quit => return,
+        }
+        self.set_pen(pen);
+    }
+
+    fn set_pen(&mut self, pen: PenSettings) {
+        match self.renderer.set_pen(&pen) {
+            Ok(()) => self.pen = pen,
+            Err(error) => log_error("changing pen", &error),
+        }
+    }
+
+    /// Puts the tray icon back after Explorer recreated the taskbar.
+    fn show_tray_icon(&self) {
+        if let Err(error) = self.tray_icon.show() {
+            log_error("re-adding tray icon", &error);
+        }
     }
 
     fn paint(&self) {
@@ -233,7 +282,7 @@ unsafe extern "system" fn window_proc(
         WM_CTRL_STATE_CHANGED => with_state(|state| state.on_ctrl_state_changed(wparam.0 != 0)),
         WM_LBUTTONDOWN => with_state(|state| state.on_mouse_down(point_from_lparam(lparam))),
         WM_MOUSEMOVE => with_state(|state| state.on_mouse_move(point_from_lparam(lparam))),
-        WM_LBUTTONUP => with_state(OverlayState::on_mouse_up),
+        WM_LBUTTONUP => with_state(|state| state.on_mouse_up(point_from_lparam(lparam))),
         // Another window took the mouse mid-stroke: keep what was drawn.
         WM_CAPTURECHANGED => with_state(OverlayState::finish_stroke),
         WM_PAINT => {
@@ -243,14 +292,13 @@ unsafe extern "system" fn window_proc(
             let _ = unsafe { ValidateRect(Some(window), None) };
             painted
         }
-        WM_HOTKEY => with_state(|state| match wparam.0 as i32 {
-            CLEAR_HOTKEY_ID => state.clear_drawing(),
-            QUIT_HOTKEY_ID => {
-                // SAFETY: destroying our own window; WM_DESTROY follows.
-                let _ = unsafe { DestroyWindow(state.window) };
-            }
-            _ => {}
-        }),
+        WM_HOTKEY => match wparam.0 as i32 {
+            CLEAR_HOTKEY_ID => with_state(OverlayState::clear_drawing),
+            QUIT_HOTKEY_ID => destroy_overlay(window),
+            _ => None,
+        },
+        WM_TRAY_ICON => on_tray_icon_event(window, lparam),
+        message if tray::is_taskbar_created(message) => with_state(|state| state.show_tray_icon()),
         // Clicking the overlay must never activate it or steal focus.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
         WM_DESTROY => {
@@ -268,9 +316,32 @@ unsafe extern "system" fn window_proc(
     }
 }
 
+/// Opens the settings menu on a tray icon click and applies the pick.
+fn on_tray_icon_event(window: HWND, lparam: LPARAM) -> Option<()> {
+    if !tray::is_menu_click(lparam) {
+        return Some(());
+    }
+    // The menu runs its own message loop. The state must not be borrowed
+    // meanwhile, or every message during the menu would be ignored.
+    let pen = with_state(|state| state.pen)?;
+    match tray::show_menu(window, &pen) {
+        Some(MenuCommand::Quit) => destroy_overlay(window),
+        Some(command) => with_state(|state| state.apply_menu_command(command)),
+        None => Some(()),
+    }
+}
+
+/// Closes the app. Must be called without the state borrowed:
+/// DestroyWindow sends WM_DESTROY right away, which drops the state.
+fn destroy_overlay(window: HWND) -> Option<()> {
+    // SAFETY: destroying our own window; WM_DESTROY follows.
+    let _ = unsafe { DestroyWindow(window) };
+    Some(())
+}
+
 /// Runs `action` on the overlay state. Returns `None` if the state does not
 /// exist yet, or is already in use further up the call stack (re-entrancy).
-fn with_state(action: impl FnOnce(&mut OverlayState)) -> Option<()> {
+fn with_state<T>(action: impl FnOnce(&mut OverlayState) -> T) -> Option<T> {
     OVERLAY_STATE.with(|cell| {
         let mut state = cell.try_borrow_mut().ok()?;
         state.as_mut().map(action)

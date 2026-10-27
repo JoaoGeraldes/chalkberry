@@ -4,8 +4,14 @@
 //! that decides what a stroke looks like can be unit-tested on any machine.
 
 /// Points closer than this to the previous point are ignored. Dropping them
-/// avoids tiny jittery segments when the mouse barely moves.
-const MIN_POINT_SPACING_PX: f32 = 1.0;
+/// avoids tiny jittery segments: mouse positions are whole pixels, so very
+/// close points turn a diagonal line into a wobbly staircase.
+const MIN_POINT_SPACING_PX: f32 = 2.5;
+
+/// How far the pen tip moves toward the cursor on each mouse move, from 0.0
+/// (never) to 1.0 (jumps straight there). Below 1.0 the tip trails the
+/// cursor slightly, which irons out hand tremor and pixel steps.
+const STABILIZER_FOLLOW: f32 = 0.5;
 
 /// A position in overlay pixel coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,6 +27,13 @@ impl Point {
 
     fn midpoint(self, other: Point) -> Point {
         Point::new((self.x + other.x) / 2.0, (self.y + other.y) / 2.0)
+    }
+
+    fn moved_toward(self, target: Point, fraction: f32) -> Point {
+        Point::new(
+            self.x + (target.x - self.x) * fraction,
+            self.y + (target.y - self.y) * fraction,
+        )
     }
 
     fn distance_to(self, other: Point) -> f32 {
@@ -52,6 +65,9 @@ pub enum StrokeShape {
 #[derive(Clone, Debug)]
 pub struct Stroke {
     points: Vec<Point>,
+    /// The stabilized pen tip. It follows the cursor smoothly and is moved
+    /// on every mouse move, even when no point is recorded.
+    pen_tip: Point,
 }
 
 impl Stroke {
@@ -59,11 +75,24 @@ impl Stroke {
     pub fn begin(start: Point) -> Self {
         Self {
             points: vec![start],
+            pen_tip: start,
         }
     }
 
-    /// Adds a mouse position, unless it is too close to the previous one.
-    pub fn add_point(&mut self, point: Point) {
+    /// Moves the pen toward a new mouse position and records where it lands.
+    pub fn add_point(&mut self, cursor: Point) {
+        self.pen_tip = self.pen_tip.moved_toward(cursor, STABILIZER_FOLLOW);
+        self.record_point(self.pen_tip);
+    }
+
+    /// Finishes the line exactly where the mouse was released, so the
+    /// stabilizer's trailing tip does not leave it short.
+    pub fn end(&mut self, release_point: Point) {
+        self.record_point(release_point);
+    }
+
+    /// Records a point, unless it is too close to the previous one.
+    fn record_point(&mut self, point: Point) {
         let is_far_enough = self
             .points
             .last()
@@ -149,9 +178,9 @@ mod tests {
     }
 
     #[test]
-    fn two_points_create_straight_line() {
+    fn click_and_release_elsewhere_creates_straight_line() {
         let mut stroke = Stroke::begin(Point::new(0.0, 0.0));
-        stroke.add_point(Point::new(10.0, 0.0));
+        stroke.end(Point::new(10.0, 0.0));
         assert_eq!(
             stroke.shape(),
             StrokeShape::Path {
@@ -161,6 +190,52 @@ mod tests {
                 }],
             }
         );
+    }
+
+    #[test]
+    fn pen_tip_trails_behind_cursor() {
+        let mut stroke = Stroke::begin(Point::new(0.0, 0.0));
+        stroke.add_point(Point::new(20.0, 0.0));
+        let StrokeShape::Path { segments, .. } = stroke.shape() else {
+            panic!("a 20 px drag must create a path");
+        };
+        let tip = segment_end(segments.last().expect("one segment"));
+        assert!(tip.x > 0.0 && tip.x < 20.0, "tip at {tip:?}");
+    }
+
+    #[test]
+    fn released_stroke_ends_at_release_point() {
+        let mut stroke = Stroke::begin(Point::new(0.0, 0.0));
+        for step in 1..=10 {
+            stroke.add_point(Point::new(step as f32 * 5.0, 0.0));
+        }
+        stroke.end(Point::new(50.0, 0.0));
+        let StrokeShape::Path { segments, .. } = stroke.shape() else {
+            panic!("a 50 px drag must create a path");
+        };
+        let end = segment_end(segments.last().expect("segments"));
+        assert_eq!(end, Point::new(50.0, 0.0));
+    }
+
+    #[test]
+    fn pixel_jitter_is_smoothed_out() {
+        // A diagonal drawn with whole-pixel mouse positions zig-zags by
+        // up to one pixel. The stabilized points should stay much closer
+        // to the true diagonal than the raw ones.
+        let mut stroke = Stroke::begin(Point::new(0.0, 0.0));
+        for step in 1..=60 {
+            let x = step as f32;
+            let jitter = if step % 2 == 0 { 1.0 } else { 0.0 };
+            stroke.add_point(Point::new(x, (x * 0.5).floor() + jitter));
+        }
+        let worst_offset = stroke
+            .points
+            .iter()
+            .skip(4) // the tip needs a few moves to catch up with the cursor
+            .map(|point| (point.y - point.x * 0.5).abs())
+            .fold(0.0, f32::max);
+        // The raw mouse positions stray up to 1.0 px from the diagonal.
+        assert!(worst_offset < 0.75, "worst offset {worst_offset}");
     }
 
     #[test]

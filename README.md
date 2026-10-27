@@ -1,14 +1,19 @@
 # Windows Pen Marker
 
 A tiny native Windows app for drawing on top of the screen. While it runs,
-**hold Ctrl and click or drag** to draw smooth marker lines over anything.
-Without Ctrl, the mouse works normally.
+**hold Ctrl and click or drag** to draw smooth, chalk-textured lines over
+anything. Without Ctrl, the mouse works normally.
 
 | Action | Shortcut |
 |---|---|
 | Draw | Hold **Ctrl** + click / drag |
 | Clear drawings | **Ctrl + Alt + C** |
 | Quit | **Ctrl + Alt + Q** |
+| Change colour, thickness, opacity | Click the chalkboard icon in the taskbar's notification area |
+
+New settings apply to the next strokes; lines already drawn keep their look.
+If the icon is not visible, it may be in the hidden-icons overflow (the **^**
+arrow); drag it onto the taskbar to keep it in view.
 
 ## Requirements
 
@@ -36,4 +41,5 @@ cargo test
 ```
 
 - Code rules and the module map are in [`CLAUDE.md`](CLAUDE.md).
-- Pen colour, width, and hotkeys live in [`src/config.rs`](src/config.rs).
+- The menu's colour, thickness and opacity choices, the startup pen, and the
+  hotkeys live in [`src/config.rs`](src/config.rs).
