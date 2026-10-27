@@ -69,15 +69,17 @@ pub enum ToolbarButton {
     Color,
     Width,
     Opacity,
+    Screenshot,
     Clear,
     Hide,
 }
 
 impl ToolbarButton {
-    pub const ALL: [ToolbarButton; 5] = [
+    pub const ALL: [ToolbarButton; 6] = [
         ToolbarButton::Color,
         ToolbarButton::Width,
         ToolbarButton::Opacity,
+        ToolbarButton::Screenshot,
         ToolbarButton::Clear,
         ToolbarButton::Hide,
     ];
@@ -88,13 +90,13 @@ impl ToolbarButton {
             ToolbarButton::Color => Some(Picker::Color),
             ToolbarButton::Width => Some(Picker::Width),
             ToolbarButton::Opacity => Some(Picker::Opacity),
-            ToolbarButton::Clear | ToolbarButton::Hide => None,
+            ToolbarButton::Screenshot | ToolbarButton::Clear | ToolbarButton::Hide => None,
         }
     }
 
     /// Buttons after the pen settings are set apart by a wider gap.
     fn starts_new_group(self) -> bool {
-        self == ToolbarButton::Clear
+        self == ToolbarButton::Screenshot
     }
 }
 
@@ -159,6 +161,10 @@ fn button_tooltip(button: ToolbarButton) -> (&'static str, &'static str) {
         ToolbarButton::Color => ("Colour", "Click to pick the chalk colour for new lines."),
         ToolbarButton::Width => ("Thickness", "Click to pick how thick new lines are."),
         ToolbarButton::Opacity => ("Opacity", "Click to pick how see-through new lines are."),
+        ToolbarButton::Screenshot => (
+            "Screenshot",
+            "Captures the screen with your drawings. Crop it if you like, then save it.",
+        ),
         ToolbarButton::Clear => (
             "Clear all",
             "Erases everything you have drawn. Shortcut: Ctrl + Alt + C.",
@@ -302,11 +308,11 @@ mod tests {
     }
 
     #[test]
-    fn clear_button_is_set_apart_from_pen_buttons() {
+    fn action_buttons_are_set_apart_from_pen_buttons() {
         let layout = ToolbarLayout::new(None);
         let opacity = layout.button_rect(ToolbarButton::Opacity);
-        let clear = layout.button_rect(ToolbarButton::Clear);
-        assert!(clear.left - opacity.right > BUTTON_GAP);
+        let screenshot = layout.button_rect(ToolbarButton::Screenshot);
+        assert!(screenshot.left - opacity.right > BUTTON_GAP);
     }
 
     #[test]

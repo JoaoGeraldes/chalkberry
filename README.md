@@ -27,6 +27,7 @@ A small dark bar appears at the top of the screen. Drag it by any empty spot
 | Coloured dot | Opens a row of colours |
 | Grey dot | Opens a row of thicknesses (dots drawn at real size) |
 | Dot in a ring | Opens a row of opacities |
+| Camera | Takes a screenshot with your drawings (see below) |
 | Bin | Clears the drawing |
 | Dash | Hides the toolbar; a bubble points at the tray icon to show where it went |
 
@@ -37,6 +38,18 @@ When the app starts, a glow in your chalk colour pulses around the toolbar
 three times and a light bubble points at it for a few seconds, so you know
 it is running even on a screen full of dark windows. When you hide the toolbar, a bubble points at the tray
 icon to show where it went.
+
+### Screenshots
+
+Click the camera. The toolbar steps aside, the screen (all monitors, with
+your drawings) is captured, and a preview opens with a blue box around
+everything. Drag to draw a smaller box if you only want part of it; click
+without dragging to go back to the whole screen.
+
+The panel at the bottom shows **Saves to:** with the folder the PNG will go
+to. **Change folder…** picks another one (remembered for next time; the
+first default is `Pictures\Pen Marker`). **Save** (or Enter) saves,
+**Cancel** (or Esc) discards. A bubble then shows the saved file's path.
 
 Bring a hidden toolbar back with **Show toolbar** in the tray icon's menu.
 New settings apply to the next strokes; lines already drawn keep their look.

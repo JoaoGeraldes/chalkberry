@@ -297,6 +297,7 @@ impl ToolbarState {
             return;
         }
         match button {
+            ToolbarButton::Screenshot => self.send_command(Command::TakeScreenshot),
             ToolbarButton::Clear => self.send_command(Command::ClearDrawing),
             ToolbarButton::Hide => self.send_command(Command::HideToolbar),
             // Pen buttons opened their picker above.
@@ -548,6 +549,7 @@ impl ToolbarState {
                 painter.fill_circle(center, OPACITY_ICON_DISC_RADIUS, disc_color);
                 painter.stroke_circle(center, SWATCH_RADIUS, ICON_COLOR, 1.0);
             }
+            ToolbarButton::Screenshot => draw_camera_icon(painter, center),
             ToolbarButton::Clear => draw_trash_icon(painter, center),
             ToolbarButton::Hide => draw_hide_icon(painter, center),
         }
@@ -686,6 +688,17 @@ fn draw_grip(painter: &Painter, rect: Rect) {
             painter.fill_circle(dot, GRIP_DOT_RADIUS, GRIP_COLOR);
         }
     }
+}
+
+/// A camera: body outline, a bump on top, and the lens.
+fn draw_camera_icon(painter: &Painter, (x, y): (f32, f32)) {
+    let (left, right, top, bottom) = (x - 7.5, x + 7.5, y - 4.0, y + 6.0);
+    painter.line((left, top), (right, top));
+    painter.line((right, top), (right, bottom));
+    painter.line((right, bottom), (left, bottom));
+    painter.line((left, bottom), (left, top));
+    painter.line((x - 3.0, top - 2.5), (x + 3.0, top - 2.5)); // viewfinder bump
+    painter.stroke_circle((x, y + 1.0), 3.0, ICON_COLOR, ICON_LINE_WIDTH);
 }
 
 fn draw_trash_icon(painter: &Painter, (x, y): (f32, f32)) {

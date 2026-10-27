@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Dwm::DwmFlush;
 use windows::Win32::Graphics::Gdi::{InvalidateRect, ValidateRect};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
@@ -34,10 +35,12 @@ use crate::callout::{self, CalloutKind};
 use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
+use crate::crop_window::{self, WM_CROP_FINISHED};
 use crate::cursors::Cursors;
 use crate::glow;
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
+use crate::screenshot;
 use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
 use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
@@ -51,6 +54,9 @@ const STILL_RUNNING_TITLE: &str = "Pen Marker is still running";
 const STILL_RUNNING_TEXT: &str =
     "The toolbar is hidden. Click the chalkboard icon here to bring it back.";
 const STILL_RUNNING_VISIBLE_MS: u32 = 6500;
+
+const SCREENSHOT_SAVED_TITLE: &str = "Screenshot saved";
+const SCREENSHOT_SAVED_VISIBLE_MS: u32 = 7000;
 
 /// When Windows cannot say where the tray icon is, point at the screen's
 /// bottom-right corner, where the notification area usually is.
@@ -335,6 +341,7 @@ impl OverlayState {
             Command::ToggleToolbar if self.toolbar.is_visible() => self.toolbar.hide(),
             Command::ToggleToolbar => self.toolbar.show(),
             Command::HideToolbar => self.hide_toolbar_with_notice(),
+            Command::TakeScreenshot => self.take_screenshot(),
             Command::PickColor(_)
             | Command::PickWidth(_)
             | Command::PickOpacity(_)
@@ -379,6 +386,45 @@ impl OverlayState {
             visible_ms: READY_VISIBLE_MS,
         };
         callout::show(READY_TITLE, READY_TEXT, target, dpi, kind);
+    }
+
+    /// Captures the screen (drawings included) and opens the crop screen.
+    fn take_screenshot(&self) {
+        if crop_window::is_open() {
+            return;
+        }
+        // Keep the app's own controls out of the picture.
+        self.toolbar.hide();
+        callout::hide();
+        // SAFETY: plain call; waits until the screen no longer shows them.
+        let _ = unsafe { DwmFlush() };
+        let opened =
+            screenshot::capture_all_screens().and_then(|shot| crop_window::open(self.window, shot));
+        if let Err(error) = opened {
+            log_error("taking screenshot", &error);
+            self.toolbar.show();
+        }
+    }
+
+    /// The crop screen closed: bring the toolbar back and, if a file was
+    /// saved, say exactly where.
+    fn on_crop_finished(&self) {
+        self.toolbar.show();
+        let Some(path) = crop_window::take_saved_path() else {
+            return;
+        };
+        let text = format!("Saved to {}", path.display());
+        let kind = CalloutKind::Notice {
+            visible_ms: SCREENSHOT_SAVED_VISIBLE_MS,
+        };
+        let target = self.toolbar.screen_rect();
+        callout::show(
+            SCREENSHOT_SAVED_TITLE,
+            &text,
+            target,
+            self.toolbar.dpi(),
+            kind,
+        );
     }
 
     /// Puts the tray icon back after Explorer recreated the taskbar.
@@ -439,6 +485,7 @@ unsafe extern "system" fn window_proc(
         },
         WM_TRAY_ICON => on_tray_icon_event(window, lparam),
         WM_TOOLBAR_COMMAND => on_command(window, Command::from_id(wparam.0)),
+        WM_CROP_FINISHED => with_state(|state| state.on_crop_finished()),
         message if tray::is_taskbar_created(message) => with_state(|state| state.show_tray_icon()),
         // Clicking the overlay must never activate it or steal focus.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),

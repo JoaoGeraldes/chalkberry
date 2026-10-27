@@ -122,6 +122,11 @@ pub fn show(title: &str, body: &str, target: PixelRect, dpi: u32, kind: CalloutK
     }
 }
 
+/// Hides the bubble right away, whatever it is showing.
+pub fn hide() {
+    with_state(CalloutState::hide_now);
+}
+
 /// Hides the bubble if it is a tooltip. Notices are left to fade out.
 pub fn hide_tooltip() {
     with_state(|state| {

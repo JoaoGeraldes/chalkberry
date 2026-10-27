@@ -12,6 +12,7 @@ const CLEAR_DRAWING_ID: usize = 1;
 const QUIT_ID: usize = 2;
 const TOGGLE_TOOLBAR_ID: usize = 3;
 const HIDE_TOOLBAR_ID: usize = 4;
+const TAKE_SCREENSHOT_ID: usize = 5;
 const COLOR_IDS_START: usize = 100;
 const WIDTH_IDS_START: usize = 200;
 const OPACITY_IDS_START: usize = 300;
@@ -29,6 +30,8 @@ pub enum Command {
     ToggleToolbar,
     /// From the toolbar's own hide button. Tells the user where it went.
     HideToolbar,
+    /// Capture the screen (drawings included), let the user crop it, save.
+    TakeScreenshot,
     Quit,
 }
 
@@ -42,6 +45,7 @@ impl Command {
             Command::ClearDrawing => CLEAR_DRAWING_ID,
             Command::ToggleToolbar => TOGGLE_TOOLBAR_ID,
             Command::HideToolbar => HIDE_TOOLBAR_ID,
+            Command::TakeScreenshot => TAKE_SCREENSHOT_ID,
             Command::Quit => QUIT_ID,
         }
     }
@@ -62,6 +66,7 @@ impl Command {
             Command::ClearDrawing
             | Command::ToggleToolbar
             | Command::HideToolbar
+            | Command::TakeScreenshot
             | Command::Quit => None,
         }
     }
@@ -74,6 +79,7 @@ impl Command {
             QUIT_ID => Some(Command::Quit),
             TOGGLE_TOOLBAR_ID => Some(Command::ToggleToolbar),
             HIDE_TOOLBAR_ID => Some(Command::HideToolbar),
+            TAKE_SCREENSHOT_ID => Some(Command::TakeScreenshot),
             _ => None,
         };
         fixed_command
@@ -106,6 +112,7 @@ mod tests {
             Command::ClearDrawing,
             Command::ToggleToolbar,
             Command::HideToolbar,
+            Command::TakeScreenshot,
             Command::Quit,
         ];
         commands.extend((0..COLOR_CHOICES.len()).map(Command::PickColor));
