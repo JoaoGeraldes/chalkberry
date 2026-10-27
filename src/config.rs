@@ -44,7 +44,7 @@ pub const OPACITY_CHOICES: [(&str, f32); 4] = [
     ("25%", 0.25),
 ];
 
-/// The pen used when the app starts.
+/// The pen on the very first start; after that, the saved one (see `settings`).
 pub const DEFAULT_PEN: PenSettings = PenSettings {
     color_rgb: COLOR_CHOICES[0].1,
     opacity: OPACITY_CHOICES[0].1,

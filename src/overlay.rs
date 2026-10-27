@@ -5,8 +5,10 @@
 //! or erase is in progress) it captures the mouse so the user can draw with
 //! the left button and erase whole strokes with the right one. This module
 //! wires input to strokes, strokes to the renderer, and tray menu and
-//! toolbar picks to pen settings; the drawing itself lives in `renderer`,
-//! the stroke maths in `stroke`, and the controls in `tray` and `toolbar`.
+//! toolbar picks to pen settings. It owns the user's [`Settings`] and saves
+//! them after every change. The drawing itself lives in `renderer`, the
+//! stroke maths in `stroke`, the file format in `settings`, and the
+//! controls in `tray` and `toolbar`.
 
 use std::cell::RefCell;
 
@@ -34,15 +36,16 @@ use windows::core::{Result, w};
 use crate::callout::{self, CalloutKind};
 use crate::callout_placement::PixelRect;
 use crate::command::Command;
-use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
+use crate::config::{CLEAR_HOTKEY_LETTER, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::crop_window::{self, WM_CROP_FINISHED};
 use crate::cursors::Cursors;
 use crate::glow;
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
 use crate::screenshot;
+use crate::settings::Settings;
 use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
-use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND};
+use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND, WM_TOOLBAR_MOVED};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
 
 const READY_TITLE: &str = "Pen Marker is ready";
@@ -77,12 +80,16 @@ thread_local! {
 /// and tray icon, and registers the clear/quit hotkeys. Returns the window so other
 /// modules can target it.
 pub fn create_overlay() -> Result<HWND> {
+    let default_folder = screenshot::default_folder();
+    let saved_settings = Settings::load(default_folder.clone());
+    let is_first_start = saved_settings.is_none();
+    let settings = saved_settings.unwrap_or_else(|| Settings::defaults(default_folder));
     let window = create_overlay_window()?;
     let (width, height) = virtual_screen_size();
-    let renderer = Renderer::new(window, width, height, &DEFAULT_PEN)?;
+    let renderer = Renderer::new(window, width, height, &settings.pen)?;
     callout::create(window)?;
     glow::create(window)?;
-    let toolbar = Toolbar::create(window, &DEFAULT_PEN)?;
+    let toolbar = Toolbar::create(window, &settings.pen, settings.toolbar_top_left)?;
     let tray_icon = TrayIcon::new(window)?;
     // Not fatal: right after login the taskbar may not exist yet. The icon
     // is added again when the taskbar announces itself.
@@ -96,7 +103,7 @@ pub fn create_overlay() -> Result<HWND> {
             tray_icon,
             toolbar,
             cursors: Cursors::load(),
-            pen: DEFAULT_PEN,
+            settings,
             drawn_strokes: Vec::new(),
             is_erasing: false,
             active_stroke: None,
@@ -109,8 +116,13 @@ pub fn create_overlay() -> Result<HWND> {
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
     }
     with_state(|state| {
-        state.toolbar.show();
-        state.point_out_toolbar();
+        state.show_at_start();
+        // Write the defaults right away, so the settings file always
+        // exists and shows every setting there is.
+        if is_first_start {
+            state.remember_toolbar_place();
+            state.save_settings();
+        }
     });
     Ok(window)
 }
@@ -195,8 +207,8 @@ struct OverlayState {
     toolbar: Toolbar,
     /// The pen while drawing, the crosshair while erasing.
     cursors: Cursors,
-    /// The pen used for new strokes, as last picked in the tray menu.
-    pen: PenSettings,
+    /// The pen, toolbar place and screenshot folder; saved on every change.
+    settings: Settings,
     /// Every finished stroke on screen, oldest first. Kept so a single
     /// stroke can be erased and the rest redrawn.
     drawn_strokes: Vec<DrawnStroke>,
@@ -259,7 +271,7 @@ impl OverlayState {
             match self.renderer.add_finished_stroke(&shape) {
                 Ok(()) => self.drawn_strokes.push(DrawnStroke {
                     shape,
-                    pen: self.pen,
+                    pen: self.settings.pen,
                 }),
                 Err(error) => log_error("saving finished stroke", &error),
             }
@@ -332,15 +344,17 @@ impl OverlayState {
     /// here: destroying the window must happen outside the state borrow
     /// (see `on_command`).
     fn apply_command(&mut self, command: Command) {
-        if let Some(pen) = command.pen_after(self.pen) {
+        if let Some(pen) = command.pen_after(self.settings.pen) {
             self.set_pen(pen);
             return;
         }
         match command {
             Command::ClearDrawing => self.clear_drawing(),
-            Command::ToggleToolbar if self.toolbar.is_visible() => self.toolbar.hide(),
-            Command::ToggleToolbar => self.toolbar.show(),
-            Command::HideToolbar => self.hide_toolbar_with_notice(),
+            Command::ToggleToolbar => self.set_toolbar_visible(!self.toolbar.is_visible()),
+            Command::HideToolbar => {
+                self.set_toolbar_visible(false);
+                self.point_out_tray_icon(STILL_RUNNING_TITLE, STILL_RUNNING_TEXT);
+            }
             Command::TakeScreenshot => self.take_screenshot(),
             Command::PickColor(_)
             | Command::PickWidth(_)
@@ -352,17 +366,62 @@ impl OverlayState {
     fn set_pen(&mut self, pen: PenSettings) {
         match self.renderer.set_pen(&pen) {
             Ok(()) => {
-                self.pen = pen;
+                self.settings.pen = pen;
                 self.toolbar.set_pen(&pen);
+                self.save_settings();
             }
             Err(error) => log_error("changing pen", &error),
         }
     }
 
-    /// Hidden from its own button, so point at the tray icon to show
-    /// where it went.
-    fn hide_toolbar_with_notice(&self) {
-        self.toolbar.hide();
+    /// Shows or hides the toolbar at the user's request, and remembers it.
+    /// (Hiding it just for a screenshot does not go through here.)
+    fn set_toolbar_visible(&mut self, is_visible: bool) {
+        if is_visible {
+            self.toolbar.show();
+        } else {
+            self.toolbar.hide();
+        }
+        self.settings.is_toolbar_visible = is_visible;
+        self.save_settings();
+    }
+
+    /// The user dragged the toolbar somewhere new.
+    fn on_toolbar_moved(&mut self) {
+        // Clicking the background without dragging also ends a "move".
+        let previous_place = self.settings.toolbar_top_left;
+        self.remember_toolbar_place();
+        if self.settings.toolbar_top_left != previous_place {
+            self.save_settings();
+        }
+    }
+
+    fn remember_toolbar_place(&mut self) {
+        let place = self.toolbar.screen_rect();
+        self.settings.toolbar_top_left = Some((place.left, place.top));
+    }
+
+    /// Failing to save is not worth interrupting the user: log it only.
+    fn save_settings(&self) {
+        if let Err(error) = self.settings.save() {
+            eprintln!("[pen-marker] error while saving settings: {error}");
+        }
+    }
+
+    /// At start-up, show the toolbar as the user left it, and point at it
+    /// (or at the tray icon, if it is hidden) so it is clear the app runs.
+    fn show_at_start(&self) {
+        if self.settings.is_toolbar_visible {
+            self.toolbar.show();
+            self.point_out_toolbar();
+        } else {
+            self.point_out_tray_icon(READY_TITLE, STILL_RUNNING_TEXT);
+        }
+    }
+
+    /// The toolbar is hidden, so point at the tray icon to show where its
+    /// settings went.
+    fn point_out_tray_icon(&self, title: &str, text: &str) {
         let target = self
             .tray_icon
             .screen_rect()
@@ -372,7 +431,7 @@ impl OverlayState {
         let kind = CalloutKind::Notice {
             visible_ms: STILL_RUNNING_VISIBLE_MS,
         };
-        callout::show(STILL_RUNNING_TITLE, STILL_RUNNING_TEXT, target, dpi, kind);
+        callout::show(title, text, target, dpi, kind);
     }
 
     /// At start-up: pulse a glow around the toolbar and point at it with a
@@ -381,7 +440,12 @@ impl OverlayState {
     fn point_out_toolbar(&self) {
         let target = self.toolbar.screen_rect();
         let dpi = self.toolbar.dpi();
-        glow::pulse_around(target, self.toolbar.window(), dpi, self.pen.color_rgb);
+        glow::pulse_around(
+            target,
+            self.toolbar.window(),
+            dpi,
+            self.settings.pen.color_rgb,
+        );
         let kind = CalloutKind::Notice {
             visible_ms: READY_VISIBLE_MS,
         };
@@ -398,19 +462,27 @@ impl OverlayState {
         callout::hide();
         // SAFETY: plain call; waits until the screen no longer shows them.
         let _ = unsafe { DwmFlush() };
-        let opened =
-            screenshot::capture_all_screens().and_then(|shot| crop_window::open(self.window, shot));
+        let folder = self.settings.screenshot_folder.clone();
+        let opened = screenshot::capture_all_screens()
+            .and_then(|shot| crop_window::open(self.window, shot, folder));
         if let Err(error) = opened {
             log_error("taking screenshot", &error);
             self.toolbar.show();
         }
     }
 
-    /// The crop screen closed: bring the toolbar back and, if a file was
-    /// saved, say exactly where.
-    fn on_crop_finished(&self) {
+    /// The crop screen closed: bring the toolbar back, remember the folder
+    /// if the user changed it and, if a file was saved, say exactly where.
+    fn on_crop_finished(&mut self) {
         self.toolbar.show();
-        let Some(path) = crop_window::take_saved_path() else {
+        let Some(outcome) = crop_window::take_outcome() else {
+            return;
+        };
+        if outcome.folder != self.settings.screenshot_folder {
+            self.settings.screenshot_folder = outcome.folder;
+            self.save_settings();
+        }
+        let Some(path) = outcome.saved_path else {
             return;
         };
         let text = format!("Saved to {}", path.display());
@@ -485,7 +557,8 @@ unsafe extern "system" fn window_proc(
         },
         WM_TRAY_ICON => on_tray_icon_event(window, lparam),
         WM_TOOLBAR_COMMAND => on_command(window, Command::from_id(wparam.0)),
-        WM_CROP_FINISHED => with_state(|state| state.on_crop_finished()),
+        WM_CROP_FINISHED => with_state(OverlayState::on_crop_finished),
+        WM_TOOLBAR_MOVED => with_state(OverlayState::on_toolbar_moved),
         message if tray::is_taskbar_created(message) => with_state(|state| state.show_tray_icon()),
         // Clicking the overlay must never activate it or steal focus.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
@@ -518,7 +591,8 @@ fn on_tray_icon_event(window: HWND, lparam: LPARAM) -> Option<()> {
     }
     // The menu runs its own message loop. The state must not be borrowed
     // meanwhile, or every message during the menu would be ignored.
-    let (pen, is_toolbar_visible) = with_state(|state| (state.pen, state.toolbar.is_visible()))?;
+    let (pen, is_toolbar_visible) =
+        with_state(|state| (state.settings.pen, state.toolbar.is_visible()))?;
     on_command(window, tray::show_menu(window, &pen, is_toolbar_visible))
 }
 

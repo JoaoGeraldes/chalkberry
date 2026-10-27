@@ -3,8 +3,9 @@
 //! hint at the bottom explains how to draw and erase, and resting the mouse
 //! on a button or choice shows a tooltip (drawn by `callout`).
 //!
-//! The toolbar only draws itself and posts [`WM_TOOLBAR_COMMAND`] to its
-//! owner (the overlay). It never changes pen settings or strokes directly.
+//! The toolbar only draws itself and posts [`WM_TOOLBAR_COMMAND`] (and
+//! [`WM_TOOLBAR_MOVED`]) to its owner (the overlay). It never changes pen
+//! settings or strokes directly, and does not save its own position.
 //! Layout and hit testing live in `toolbar_layout`.
 
 use std::cell::RefCell;
@@ -26,7 +27,9 @@ use windows::Win32::Graphics::DirectWrite::{
 use windows::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
-use windows::Win32::Graphics::Gdi::{InvalidateRect, ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Gdi::{
+    InvalidateRect, MONITOR_DEFAULTTONULL, MonitorFromPoint, ScreenToClient, ValidateRect,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
@@ -35,8 +38,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, IsWindowVisible, KillTimer, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostMessageW,
     RegisterClassW, SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOZORDER, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, WM_APP,
-    WM_DESTROY, WM_DPICHANGED, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
-    WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WM_NCHITTEST, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Result, w};
@@ -51,6 +54,10 @@ use crate::toolbar_layout::{Picker, Rect, ToolbarButton, ToolbarHit, ToolbarLayo
 /// Posted to the owner window when the user picks something on the
 /// toolbar. `wparam` is the [`Command::id`].
 pub const WM_TOOLBAR_COMMAND: u32 = WM_APP + 3;
+
+/// Posted to the owner window when the user has finished dragging the
+/// toolbar. Read the new place from [`Toolbar::screen_rect`].
+pub const WM_TOOLBAR_MOVED: u32 = WM_APP + 5;
 
 /// Sent when the mouse leaves a window that asked for it with
 /// `TrackMouseEvent`. Defined here because the `windows` crate only
@@ -110,17 +117,23 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
-    /// Creates the (still hidden) toolbar near the top centre of the
-    /// primary screen, showing `pen`.
-    pub fn create(owner: HWND, pen: &PenSettings) -> Result<Self> {
+    /// Creates the (still hidden) toolbar showing `pen`, with its top-left
+    /// corner at `saved_top_left` (screen pixels). Without one, or if that
+    /// place is no longer on any screen (e.g. a monitor was unplugged), it
+    /// starts near the top centre of the primary screen.
+    pub fn create(
+        owner: HWND,
+        pen: &PenSettings,
+        saved_top_left: Option<(i32, i32)>,
+    ) -> Result<Self> {
         let window = create_toolbar_window(owner)?;
         let state = ToolbarState::new(window, owner, *pen)?;
-        let (width, _) = state.size_px();
-        let start_top = (START_TOP_MARGIN * state.dpi / BASE_DPI) as i32;
+        let (width, height) = state.size_px();
+        let start_top_left = saved_top_left
+            .filter(|&(x, y)| is_on_a_screen(x + width / 2, y + height / 2))
+            .unwrap_or_else(|| default_top_left(width, state.dpi));
         TOOLBAR_STATE.with(|cell| *cell.borrow_mut() = Some(state));
-        // SAFETY: plain Win32 call with no pointers.
-        let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-        with_state(|state| state.resize_window(Some(((screen_width - width) / 2, start_top))));
+        with_state(|state| state.resize_window(Some(start_top_left)));
         Ok(Self { window })
     }
 
@@ -316,6 +329,13 @@ impl ToolbarState {
         };
         self.send_command(command);
         self.set_layout(ToolbarLayout::new(None));
+    }
+
+    /// The user let go of the toolbar after dragging it.
+    fn on_move_finished(&self) {
+        // SAFETY: posting never blocks or touches our memory. If it fails
+        // the new place is just not remembered.
+        let _ = unsafe { PostMessageW(Some(self.owner), WM_TOOLBAR_MOVED, WPARAM(0), LPARAM(0)) };
     }
 
     fn send_command(&self, command: Command) {
@@ -818,6 +838,8 @@ unsafe extern "system" fn window_proc(
             let _ = unsafe { ValidateRect(Some(window), None) };
             painted.map(|()| LRESULT(0))
         }
+        // Ends Windows' move loop, entered by dragging the background.
+        WM_EXITSIZEMOVE => with_state(|state| state.on_move_finished()).map(|()| LRESULT(0)),
         WM_DPICHANGED => {
             let new_dpi = (wparam.0 & 0xFFFF) as u32;
             // SAFETY: for WM_DPICHANGED, Windows guarantees `lparam` points
@@ -836,6 +858,22 @@ unsafe extern "system" fn window_proc(
         // SAFETY: forwarding the unchanged arguments to the default handler.
         None => unsafe { DefWindowProcW(window, message, wparam, lparam) },
     }
+}
+
+/// Near the top centre of the primary screen, for a toolbar `width` pixels
+/// wide on a screen at `dpi`.
+fn default_top_left(width: i32, dpi: f32) -> (i32, i32) {
+    let top = (START_TOP_MARGIN * dpi / BASE_DPI) as i32;
+    // SAFETY: plain Win32 call with no pointers.
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    ((screen_width - width) / 2, top)
+}
+
+/// True if the point (screen pixels) is on one of the connected screens.
+fn is_on_a_screen(x: i32, y: i32) -> bool {
+    // SAFETY: plain Win32 call with no pointers.
+    let monitor = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONULL) };
+    !monitor.is_invalid()
 }
 
 /// A window's position and size on screen, in pixels.

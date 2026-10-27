@@ -1,11 +1,10 @@
 //! Taking and storing screenshots: capturing every screen (drawings
-//! included), writing PNG files, and choosing (and remembering) the folder
-//! they go to.
+//! included), writing PNG files, and choosing the folder they go to.
 //!
-//! This module knows nothing about the crop screen; `crop_window` uses it.
+//! This module knows nothing about the crop screen (`crop_window` uses it)
+//! and does not remember the chosen folder (`settings` does).
 
 use std::ffi::c_void;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::{GENERIC_WRITE, HWND};
@@ -36,9 +35,6 @@ const BYTES_PER_PIXEL: u32 = 4;
 /// Screenshots go here (inside the user's Pictures folder) until the user
 /// picks another folder.
 const DEFAULT_FOLDER_NAME: &str = "Pen Marker";
-/// The chosen folder is remembered in `%APPDATA%\Pen Marker\` in this file.
-const SETTINGS_FOLDER_NAME: &str = "Pen Marker";
-const FOLDER_SETTING_FILE: &str = "screenshot-folder.txt";
 
 /// A capture of every screen, as BGRA pixels (fully opaque), row by row.
 pub struct Screenshot {
@@ -169,38 +165,10 @@ pub fn new_file_path(folder: &Path) -> PathBuf {
         .unwrap_or(first_choice)
 }
 
-/// The folder screenshots are saved to: the one the user last picked, or
+/// Where screenshots go until the user picks another folder:
 /// `Pictures\Pen Marker`.
-pub fn remembered_folder() -> PathBuf {
-    folder_setting_file()
-        .and_then(|file| fs::read_to_string(file).ok())
-        .map(|text| PathBuf::from(text.trim()))
-        .filter(|folder| folder.is_dir())
-        .unwrap_or_else(|| pictures_folder().join(DEFAULT_FOLDER_NAME))
-}
-
-/// Remembers `folder` for next time. Failing to remember is not worth
-/// bothering the user about, so errors are only logged.
-pub fn remember_folder(folder: &Path) {
-    let Some(file) = folder_setting_file() else {
-        return;
-    };
-    let written = file
-        .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(&file, folder.to_string_lossy().as_bytes()));
-    if let Err(error) = written {
-        eprintln!("[pen-marker] error while remembering screenshot folder: {error}");
-    }
-}
-
-fn folder_setting_file() -> Option<PathBuf> {
-    let app_data = std::env::var_os("APPDATA")?;
-    Some(
-        PathBuf::from(app_data)
-            .join(SETTINGS_FOLDER_NAME)
-            .join(FOLDER_SETTING_FILE),
-    )
+pub fn default_folder() -> PathBuf {
+    pictures_folder().join(DEFAULT_FOLDER_NAME)
 }
 
 /// The user's Pictures folder (which may be redirected, e.g. to OneDrive).

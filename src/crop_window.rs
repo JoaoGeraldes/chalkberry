@@ -6,9 +6,10 @@
 //! When it opens, the panel pulses the start-up glow (from `glow`) a few
 //! times, so the user notices where to save.
 //! Enter saves, Esc cancels. When it closes it posts [`WM_CROP_FINISHED`]
-//! to its owner; the saved file's path is then available from
-//! [`take_saved_path`]. Layout maths lives in `crop`, file work in
-//! `screenshot`.
+//! to its owner; the saved file and the (possibly changed) folder are then
+//! available from [`take_outcome`]. It does not remember the folder itself:
+//! the owner stores it in the settings. Layout maths lives in `crop`, file
+//! work in `screenshot`.
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -99,14 +100,23 @@ const GLOW_TIMER_ID: usize = 1;
 
 thread_local! {
     static CROP_STATE: RefCell<Option<CropState>> = const { RefCell::new(None) };
-    static SAVED_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static OUTCOME: RefCell<Option<CropOutcome>> = const { RefCell::new(None) };
     static IS_CLASS_REGISTERED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Opens the crop screen over all monitors, showing `shot`.
-pub fn open(owner: HWND, shot: Screenshot) -> Result<()> {
+/// How the crop screen ended, for its owner.
+pub struct CropOutcome {
+    /// The saved file, or `None` if the user cancelled.
+    pub saved_path: Option<PathBuf>,
+    /// The screenshot folder, which the user may have changed.
+    pub folder: PathBuf,
+}
+
+/// Opens the crop screen over all monitors, showing `shot`, saving to
+/// `folder` unless the user picks another one.
+pub fn open(owner: HWND, shot: Screenshot, folder: PathBuf) -> Result<()> {
     let window = create_crop_window(owner, &shot)?;
-    let state = CropState::new(window, owner, shot)?;
+    let state = CropState::new(window, owner, shot, folder)?;
     CROP_STATE.with(|cell| *cell.borrow_mut() = Some(state));
     // SAFETY: plain Win32 calls on our own valid window. The user just
     // clicked our toolbar, so we may take the foreground (for Enter/Esc).
@@ -129,9 +139,9 @@ pub fn is_open() -> bool {
     })
 }
 
-/// The file saved when the crop screen last closed, if it saved one.
-pub fn take_saved_path() -> Option<PathBuf> {
-    SAVED_PATH.with(|cell| cell.borrow_mut().take())
+/// How the crop screen ended, once after each time it closes.
+pub fn take_outcome() -> Option<CropOutcome> {
+    OUTCOME.with(|cell| cell.borrow_mut().take())
 }
 
 /// What a click or key asks for. Carried out outside the state borrow,
@@ -186,7 +196,7 @@ struct CropState {
 }
 
 impl CropState {
-    fn new(window: HWND, owner: HWND, shot: Screenshot) -> Result<Self> {
+    fn new(window: HWND, owner: HWND, shot: Screenshot, folder: PathBuf) -> Result<Self> {
         // SAFETY: plain Win32 call with no pointers.
         let scale = unsafe { GetDpiForSystem() } as f32 / BASE_DPI;
         // SAFETY: plain Direct2D/DirectWrite calls.
@@ -225,7 +235,7 @@ impl CropState {
             drag_start: None,
             hovered_button: None,
             pressed_button: None,
-            folder: screenshot::remembered_folder(),
+            folder,
             opened_at: Instant::now(),
         })
     }
@@ -296,7 +306,6 @@ impl CropState {
     }
 
     fn set_folder(&mut self, folder: PathBuf) {
-        screenshot::remember_folder(&folder);
         self.folder = folder;
         self.request_redraw();
     }
@@ -759,10 +768,16 @@ fn run_action(window: HWND, action: CropAction) {
     }
 }
 
-/// Closes the crop screen and tells the owner, remembering what was saved.
+/// Closes the crop screen and tells the owner how it ended.
 fn close(window: HWND, saved_path: Option<PathBuf>) {
-    SAVED_PATH.with(|cell| *cell.borrow_mut() = saved_path);
-    let owner = with_state(|state| state.owner);
+    let owner = with_state(|state| {
+        let outcome = CropOutcome {
+            saved_path,
+            folder: state.folder.clone(),
+        };
+        OUTCOME.with(|cell| *cell.borrow_mut() = Some(outcome));
+        state.owner
+    });
     // SAFETY: plain Win32 calls. DestroyWindow sends WM_DESTROY right away,
     // which drops the state; nothing here holds it borrowed.
     unsafe {

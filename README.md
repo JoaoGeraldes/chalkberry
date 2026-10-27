@@ -60,8 +60,32 @@ another one (remembered for next time; the first default is
 `Pictures\Pen Marker`). **Save** (or Enter) saves, **Cancel** (or Esc)
 discards. A bubble then shows the saved file's path.
 
-The chosen folder is remembered in `%APPDATA%\Pen Marker\`. Nothing else is
-stored: the pen settings reset to the defaults each time the app starts.
+
+### Settings
+
+Your choices are saved as soon as you make them, in
+`%APPDATA%\Pen Marker\settings.json`, and restored the next time the app
+starts: the pen colour, thickness and opacity, where the toolbar is and
+whether it is hidden, and the screenshot folder. The file is created with
+the defaults on the first start:
+
+```json
+{
+  "pen_color": "#F2383F",
+  "pen_width_px": 10,
+  "pen_opacity": 1,
+  "toolbar_x": 1104,
+  "toolbar_y": 12,
+  "toolbar_visible": true,
+  "screenshot_folder": "C:\\Users\\you\\Pictures\\Pen Marker"
+}
+```
+
+You can edit it by hand while the app is closed. Values are matched to the
+nearest choice in the toolbar; anything missing or unreadable falls back to
+its default, and a toolbar place that is no longer on any screen (an
+unplugged monitor) goes back to the top of the main screen. Delete the file
+to start over with the defaults.
 
 ## Requirements
 
