@@ -8,11 +8,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod chalk;
+mod command;
 mod config;
 mod input;
 mod overlay;
 mod renderer;
 mod stroke;
+mod toolbar;
+mod toolbar_layout;
 mod tray;
 
 use windows::Win32::UI::HiDpi::{

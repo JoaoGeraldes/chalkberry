@@ -1,16 +1,18 @@
 //! The notification-area (tray) icon and its settings menu.
 //!
 //! Clicking the icon opens a menu to pick the pen colour, thickness and
-//! opacity, clear the drawing, or quit. This module only reports which
-//! [`MenuCommand`] was picked; applying it is the overlay's job. It never
-//! draws strokes or touches overlay state.
+//! opacity, show or hide the toolbar, clear the drawing, or quit. The icon
+//! can also pop up a short notice. This module only reports which
+//! [`Command`] was picked; applying it is the overlay's job. It never draws
+//! strokes or touches overlay state.
 
 use std::cell::Cell;
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
@@ -21,6 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
+use crate::command::Command;
 use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
 
 /// Posted to the overlay when the user interacts with the tray icon.
@@ -31,15 +34,6 @@ pub const WM_TRAY_ICON: u32 = WM_APP + 2;
 const TRAY_ICON_ID: u32 = 1;
 
 const TOOLTIP: &str = "Pen Marker: hold Ctrl and drag to draw";
-
-// Menu item ids. Each group of choices gets its own range of ids, so the
-// picked id tells both the group and the choice. 0 means "nothing picked".
-const CLEAR_MENU_ID: usize = 1;
-const QUIT_MENU_ID: usize = 2;
-const COLOR_MENU_IDS_START: usize = 100;
-const WIDTH_MENU_IDS_START: usize = 200;
-const OPACITY_MENU_IDS_START: usize = 300;
-const MENU_IDS_PER_GROUP: usize = 100;
 
 /// Icon artwork proportions, relative to the icon size.
 const ICON_CORNER_RADIUS: f32 = 0.22;
@@ -53,16 +47,6 @@ thread_local! {
     /// Explorer broadcasts this message when the taskbar is (re)created,
     /// e.g. after Explorer crashes. Every tray icon must then be re-added.
     static TASKBAR_CREATED_MESSAGE: Cell<u32> = const { Cell::new(0) };
-}
-
-/// What the user picked in the tray menu.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MenuCommand {
-    SetColor([f32; 3]),
-    SetWidth(f32),
-    SetOpacity(f32),
-    ClearDrawing,
-    Quit,
 }
 
 /// Keeps the tray icon in the notification area for as long as it is alive.
@@ -89,6 +73,18 @@ impl TrayIcon {
         unsafe { Shell_NotifyIconW(NIM_ADD, &icon_data).ok() }
     }
 
+    /// Pops up a short notice next to the tray icon (shown by Windows as a
+    /// notification). Too-long text is cut off.
+    pub fn show_notice(&self, title: &str, text: &str) -> Result<()> {
+        let mut icon_data = self.icon_data();
+        icon_data.uFlags = NIF_INFO;
+        icon_data.dwInfoFlags = NIIF_INFO;
+        copy_wide_text(title, &mut icon_data.szInfoTitle);
+        copy_wide_text(text, &mut icon_data.szInfo);
+        // SAFETY: `icon_data` is fully initialised and outlives the call.
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &icon_data).ok() }
+    }
+
     fn icon_data(&self) -> NOTIFYICONDATAW {
         let mut icon_data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
@@ -99,13 +95,7 @@ impl TrayIcon {
             hIcon: self.icon,
             ..Default::default()
         };
-        // The rest of `szTip` stays zero, which terminates the text. The
-        // last slot is never written, so even a too-long tooltip ends in zero.
-        let tooltip_capacity = icon_data.szTip.len() - 1;
-        let tooltip_slots = icon_data.szTip[..tooltip_capacity].iter_mut();
-        for (slot, unit) in tooltip_slots.zip(TOOLTIP.encode_utf16()) {
-            *slot = unit;
-        }
+        copy_wide_text(TOOLTIP, &mut icon_data.szTip);
         icon_data
     }
 }
@@ -119,6 +109,16 @@ impl Drop for TrayIcon {
             let _ = Shell_NotifyIconW(NIM_DELETE, &icon_data);
             let _ = DestroyIcon(self.icon);
         }
+    }
+}
+
+/// Writes `text` into a fixed-size, zero-terminated UTF-16 buffer that is
+/// all zeros. The last slot is never written, so even text that is too
+/// long and gets cut off still ends in a zero.
+fn copy_wide_text(text: &str, buffer: &mut [u16]) {
+    let capacity = buffer.len().saturating_sub(1);
+    for (slot, unit) in buffer[..capacity].iter_mut().zip(text.encode_utf16()) {
+        *slot = unit;
     }
 }
 
@@ -136,12 +136,13 @@ pub fn is_menu_click(lparam: LPARAM) -> bool {
 }
 
 /// Shows the settings menu at the mouse cursor and waits until it closes.
-/// Checkmarks show the current `pen`. Returns what was picked, if anything.
+/// Checkmarks show the current `pen` and whether the toolbar is visible.
+/// Returns what was picked, if anything.
 ///
 /// The menu runs its own message loop, so callers must not hold any state
 /// borrowed while calling this.
-pub fn show_menu(window: HWND, pen: &PenSettings) -> Option<MenuCommand> {
-    let menu = match build_menu(pen) {
+pub fn show_menu(window: HWND, pen: &PenSettings, is_toolbar_visible: bool) -> Option<Command> {
+    let menu = match build_menu(pen, is_toolbar_visible) {
         Ok(menu) => menu,
         Err(error) => {
             eprintln!("[pen-marker] error while building tray menu: {error}");
@@ -169,13 +170,13 @@ pub fn show_menu(window: HWND, pen: &PenSettings) -> Option<MenuCommand> {
         let _ = DestroyMenu(menu); // also destroys the submenus
         picked.0 as usize
     };
-    command_from_menu_id(picked_id)
+    Command::from_id(picked_id)
 }
 
-fn build_menu(pen: &PenSettings) -> Result<HMENU> {
+fn build_menu(pen: &PenSettings, is_toolbar_visible: bool) -> Result<HMENU> {
     // SAFETY: plain Win32 call.
     let menu = unsafe { CreatePopupMenu()? };
-    if let Err(error) = fill_menu(menu, pen) {
+    if let Err(error) = fill_menu(menu, pen, is_toolbar_visible) {
         // SAFETY: destroying the menu we just created, once.
         let _ = unsafe { DestroyMenu(menu) };
         return Err(error);
@@ -183,32 +184,48 @@ fn build_menu(pen: &PenSettings) -> Result<HMENU> {
     Ok(menu)
 }
 
-fn fill_menu(menu: HMENU, pen: &PenSettings) -> Result<()> {
+fn fill_menu(menu: HMENU, pen: &PenSettings, is_toolbar_visible: bool) -> Result<()> {
     append_choices_submenu(
         menu,
         "Colour",
         &COLOR_CHOICES,
         pen.color_rgb,
-        COLOR_MENU_IDS_START,
+        Command::PickColor,
     )?;
     append_choices_submenu(
         menu,
         "Thickness",
         &WIDTH_CHOICES,
         pen.width_px,
-        WIDTH_MENU_IDS_START,
+        Command::PickWidth,
     )?;
     append_choices_submenu(
         menu,
         "Opacity",
         &OPACITY_CHOICES,
         pen.opacity,
-        OPACITY_MENU_IDS_START,
+        Command::PickOpacity,
     )?;
+    append_separator(menu)?;
+    append_item(
+        menu,
+        Command::ToggleToolbar,
+        "Show toolbar",
+        is_toolbar_visible,
+    )?;
+    append_item(
+        menu,
+        Command::ClearDrawing,
+        "Clear drawing\tCtrl+Alt+C",
+        false,
+    )?;
+    append_separator(menu)?;
+    append_item(menu, Command::Quit, "Quit\tCtrl+Alt+Q", false)
+}
+
+fn append_separator(menu: HMENU) -> Result<()> {
     // SAFETY: plain Win32 call on a valid menu; separators have no text.
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())? };
-    append_item(menu, CLEAR_MENU_ID, "Clear drawing\tCtrl+Alt+C", false)?;
-    append_item(menu, QUIT_MENU_ID, "Quit\tCtrl+Alt+Q", false)
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()) }
 }
 
 /// Adds a submenu titled `title` with one item per choice. The choice equal
@@ -218,7 +235,7 @@ fn append_choices_submenu<T: Copy + PartialEq>(
     title: &str,
     choices: &[(&str, T)],
     current: T,
-    first_id: usize,
+    command_for_choice: fn(usize) -> Command,
 ) -> Result<()> {
     // SAFETY: plain Win32 call.
     let submenu = unsafe { CreatePopupMenu()? };
@@ -232,44 +249,16 @@ fn append_choices_submenu<T: Copy + PartialEq>(
         return Err(error);
     }
     for (index, &(label, value)) in choices.iter().enumerate() {
-        append_item(submenu, first_id + index, label, value == current)?;
+        append_item(submenu, command_for_choice(index), label, value == current)?;
     }
     Ok(())
 }
 
-fn append_item(menu: HMENU, id: usize, label: &str, is_checked: bool) -> Result<()> {
+fn append_item(menu: HMENU, command: Command, label: &str, is_checked: bool) -> Result<()> {
     let check_flag: MENU_ITEM_FLAGS = if is_checked { MF_CHECKED } else { MF_UNCHECKED };
+    let label = HSTRING::from(label);
     // SAFETY: plain Win32 call on a valid menu; the label is copied.
-    unsafe { AppendMenuW(menu, MF_STRING | check_flag, id, &HSTRING::from(label)) }
-}
-
-/// Maps a picked menu item id back to its command. `None` if nothing was
-/// picked (id 0) or the id is unknown.
-fn command_from_menu_id(id: usize) -> Option<MenuCommand> {
-    let group_index = |start: usize| {
-        id.checked_sub(start)
-            .filter(|&index| index < MENU_IDS_PER_GROUP)
-    };
-    if id == CLEAR_MENU_ID {
-        return Some(MenuCommand::ClearDrawing);
-    }
-    if id == QUIT_MENU_ID {
-        return Some(MenuCommand::Quit);
-    }
-    if let Some(index) = group_index(COLOR_MENU_IDS_START) {
-        return COLOR_CHOICES
-            .get(index)
-            .map(|&(_, color)| MenuCommand::SetColor(color));
-    }
-    if let Some(index) = group_index(WIDTH_MENU_IDS_START) {
-        return WIDTH_CHOICES
-            .get(index)
-            .map(|&(_, width)| MenuCommand::SetWidth(width));
-    }
-    let index = group_index(OPACITY_MENU_IDS_START)?;
-    OPACITY_CHOICES
-        .get(index)
-        .map(|&(_, opacity)| MenuCommand::SetOpacity(opacity))
+    unsafe { AppendMenuW(menu, MF_STRING | check_flag, command.id(), &label) }
 }
 
 /// Builds the tray icon from [`icon_pixels_bgra`], at the size Windows
@@ -369,56 +358,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nothing_picked_gives_no_command() {
-        assert_eq!(command_from_menu_id(0), None);
-    }
-
-    #[test]
-    fn every_colour_item_maps_to_its_colour() {
-        for (index, &(_, color)) in COLOR_CHOICES.iter().enumerate() {
-            assert_eq!(
-                command_from_menu_id(COLOR_MENU_IDS_START + index),
-                Some(MenuCommand::SetColor(color))
-            );
-        }
-    }
-
-    #[test]
-    fn width_and_opacity_items_map_to_their_values() {
-        assert_eq!(
-            command_from_menu_id(WIDTH_MENU_IDS_START + 1),
-            Some(MenuCommand::SetWidth(WIDTH_CHOICES[1].1))
-        );
-        assert_eq!(
-            command_from_menu_id(OPACITY_MENU_IDS_START + 2),
-            Some(MenuCommand::SetOpacity(OPACITY_CHOICES[2].1))
-        );
-    }
-
-    #[test]
-    fn clear_and_quit_items_map_to_their_commands() {
-        assert_eq!(
-            command_from_menu_id(CLEAR_MENU_ID),
-            Some(MenuCommand::ClearDrawing)
-        );
-        assert_eq!(command_from_menu_id(QUIT_MENU_ID), Some(MenuCommand::Quit));
-    }
-
-    #[test]
-    fn unknown_item_ids_are_ignored() {
-        let past_last_colour = COLOR_MENU_IDS_START + COLOR_CHOICES.len();
-        assert_eq!(command_from_menu_id(past_last_colour), None);
-        assert_eq!(command_from_menu_id(99), None);
-    }
-
-    #[test]
-    fn choice_groups_fit_in_their_id_ranges() {
-        assert!(COLOR_CHOICES.len() <= MENU_IDS_PER_GROUP);
-        assert!(WIDTH_CHOICES.len() <= MENU_IDS_PER_GROUP);
-        assert!(OPACITY_CHOICES.len() <= MENU_IDS_PER_GROUP);
-    }
-
-    #[test]
     fn icon_corners_are_transparent_and_centre_is_chalk() {
         let size = 32;
         let pixels = icon_pixels_bgra(size);
@@ -431,5 +370,22 @@ mod tests {
             red_at(size / 2, size / 2) > 200,
             "centre should be chalk white"
         );
+    }
+
+    #[test]
+    fn long_text_is_cut_off_but_stays_zero_terminated() {
+        let mut buffer = [0u16; 4];
+        copy_wide_text("abcdef", &mut buffer);
+        assert_eq!(
+            buffer,
+            [u16::from(b'a'), u16::from(b'b'), u16::from(b'c'), 0]
+        );
+    }
+
+    #[test]
+    fn short_text_is_copied_whole() {
+        let mut buffer = [0u16; 8];
+        copy_wide_text("hi", &mut buffer);
+        assert_eq!(&buffer[..3], &[u16::from(b'h'), u16::from(b'i'), 0]);
     }
 }

@@ -3,9 +3,9 @@
 //!
 //! The overlay is click-through by default. While Ctrl is held (or a stroke
 //! is in progress) it captures the mouse so the user can draw. This module
-//! wires input to strokes, strokes to the renderer, and tray menu picks to
-//! pen settings; the drawing itself lives in `renderer`, the stroke maths
-//! in `stroke`, and the menu in `tray`.
+//! wires input to strokes, strokes to the renderer, and tray menu and
+//! toolbar picks to pen settings; the drawing itself lives in `renderer`,
+//! the stroke maths in `stroke`, and the controls in `tray` and `toolbar`.
 
 use std::cell::RefCell;
 
@@ -27,11 +27,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Result, w};
 
+use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::input::WM_CTRL_STATE_CHANGED;
 use crate::renderer::Renderer;
 use crate::stroke::{Point, Stroke};
-use crate::tray::{self, MenuCommand, TrayIcon, WM_TRAY_ICON};
+use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND};
+use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
+
+const TOOLBAR_HIDDEN_TITLE: &str = "Toolbar hidden";
+const TOOLBAR_HIDDEN_TEXT: &str = "Pen Marker is still running. Click its icon in the notification area to bring the toolbar back.";
 
 const CLEAR_HOTKEY_ID: i32 = 1;
 const QUIT_HOTKEY_ID: i32 = 2;
@@ -44,13 +49,14 @@ thread_local! {
     static OVERLAY_STATE: RefCell<Option<OverlayState>> = const { RefCell::new(None) };
 }
 
-/// Creates the overlay covering every monitor, shows it with its tray
-/// icon, and registers the clear/quit hotkeys. Returns the window so other
+/// Creates the overlay covering every monitor, shows it with its toolbar
+/// and tray icon, and registers the clear/quit hotkeys. Returns the window so other
 /// modules can target it.
 pub fn create_overlay() -> Result<HWND> {
     let window = create_overlay_window()?;
     let (width, height) = virtual_screen_size();
     let renderer = Renderer::new(window, width, height, &DEFAULT_PEN)?;
+    let toolbar = Toolbar::create(window, &DEFAULT_PEN)?;
     let tray_icon = TrayIcon::new(window)?;
     // Not fatal: right after login the taskbar may not exist yet. The icon
     // is added again when the taskbar announces itself.
@@ -62,6 +68,7 @@ pub fn create_overlay() -> Result<HWND> {
             window,
             renderer,
             tray_icon,
+            toolbar,
             pen: DEFAULT_PEN,
             active_stroke: None,
             is_ctrl_held: false,
@@ -72,6 +79,7 @@ pub fn create_overlay() -> Result<HWND> {
     unsafe {
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
     }
+    with_state(|state| state.toolbar.show());
     Ok(window)
 }
 
@@ -152,6 +160,8 @@ struct OverlayState {
     renderer: Renderer,
     /// Removed from the taskbar when the state is dropped (on WM_DESTROY).
     tray_icon: TrayIcon,
+    /// The floating toolbar. Destroyed by Windows together with the overlay.
+    toolbar: Toolbar,
     /// The pen used for new strokes, as last picked in the tray menu.
     pen: PenSettings,
     /// The stroke being drawn right now, from mouse down to mouse up.
@@ -219,27 +229,44 @@ impl OverlayState {
         self.request_redraw();
     }
 
-    /// Applies a tray menu pick. `Quit` is not handled here: destroying the
-    /// window must happen outside the state borrow (see `destroy_overlay`).
-    fn apply_menu_command(&mut self, command: MenuCommand) {
-        let mut pen = self.pen;
-        match command {
-            MenuCommand::SetColor(color_rgb) => pen.color_rgb = color_rgb,
-            MenuCommand::SetWidth(width_px) => pen.width_px = width_px,
-            MenuCommand::SetOpacity(opacity) => pen.opacity = opacity,
-            MenuCommand::ClearDrawing => {
-                self.clear_drawing();
-                return;
-            }
-            MenuCommand::Quit => return,
+    /// Applies a pick from the tray menu or toolbar. `Quit` is not handled
+    /// here: destroying the window must happen outside the state borrow
+    /// (see `on_command`).
+    fn apply_command(&mut self, command: Command) {
+        if let Some(pen) = command.pen_after(self.pen) {
+            self.set_pen(pen);
+            return;
         }
-        self.set_pen(pen);
+        match command {
+            Command::ClearDrawing => self.clear_drawing(),
+            Command::ToggleToolbar if self.toolbar.is_visible() => self.toolbar.hide(),
+            Command::ToggleToolbar => self.toolbar.show(),
+            Command::HideToolbar => self.hide_toolbar_with_notice(),
+            Command::PickColor(_)
+            | Command::PickWidth(_)
+            | Command::PickOpacity(_)
+            | Command::Quit => {}
+        }
     }
 
     fn set_pen(&mut self, pen: PenSettings) {
         match self.renderer.set_pen(&pen) {
-            Ok(()) => self.pen = pen,
+            Ok(()) => {
+                self.pen = pen;
+                self.toolbar.set_pen(&pen);
+            }
             Err(error) => log_error("changing pen", &error),
+        }
+    }
+
+    /// Hidden from its own button, so tell the user where it went.
+    fn hide_toolbar_with_notice(&self) {
+        self.toolbar.hide();
+        if let Err(error) = self
+            .tray_icon
+            .show_notice(TOOLBAR_HIDDEN_TITLE, TOOLBAR_HIDDEN_TEXT)
+        {
+            log_error("showing toolbar notice", &error);
         }
     }
 
@@ -298,6 +325,7 @@ unsafe extern "system" fn window_proc(
             _ => None,
         },
         WM_TRAY_ICON => on_tray_icon_event(window, lparam),
+        WM_TOOLBAR_COMMAND => on_command(window, Command::from_id(wparam.0)),
         message if tray::is_taskbar_created(message) => with_state(|state| state.show_tray_icon()),
         // Clicking the overlay must never activate it or steal focus.
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
@@ -323,10 +351,15 @@ fn on_tray_icon_event(window: HWND, lparam: LPARAM) -> Option<()> {
     }
     // The menu runs its own message loop. The state must not be borrowed
     // meanwhile, or every message during the menu would be ignored.
-    let pen = with_state(|state| state.pen)?;
-    match tray::show_menu(window, &pen) {
-        Some(MenuCommand::Quit) => destroy_overlay(window),
-        Some(command) => with_state(|state| state.apply_menu_command(command)),
+    let (pen, is_toolbar_visible) = with_state(|state| (state.pen, state.toolbar.is_visible()))?;
+    on_command(window, tray::show_menu(window, &pen, is_toolbar_visible))
+}
+
+/// Carries out a command picked in the tray menu or toolbar, if any.
+fn on_command(window: HWND, command: Option<Command>) -> Option<()> {
+    match command {
+        Some(Command::Quit) => destroy_overlay(window),
+        Some(command) => with_state(|state| state.apply_command(command)),
         None => Some(()),
     }
 }

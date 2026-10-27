@@ -5,14 +5,16 @@ Rust (edition 2024) + `windows` crate; Direct2D → DXGI swap chain → DirectCo
 
 **Modules:** `main.rs` wiring · `overlay.rs` window + mouse/hotkeys · `input.rs` Ctrl keyboard hook ·
 `stroke.rs` stroke model + smoothing (pure) · `chalk.rs` chalk grain texture (pure) ·
-`renderer.rs` GPU drawing · `tray.rs` tray icon + settings menu · `config.rs` pen choices + hotkeys.
+`renderer.rs` GPU drawing · `tray.rs` tray icon + settings menu · `toolbar.rs` floating toolbar window ·
+`toolbar_layout.rs` toolbar layout + hit testing (pure) · `command.rs` user commands + ids (pure) ·
+`config.rs` pen choices + hotkeys.
 
 ## Rules
 
 1. **Simplicity first.** Write the smallest clear solution. No abstractions, traits, or features "for later".
 2. **Clear names.** Full words that say what things are or do (`begin_stroke`, `is_ctrl_held`, `width_px`). No `tmp`, `data`, `mgr`.
 3. **Small functions.** One job each, ~40 lines max, early returns over nesting, no magic numbers.
-4. **Low coupling.** Modules share small plain types (`Point`, `StrokeShape`). `stroke.rs` and `chalk.rs` never import `windows`; input and tray know nothing about drawing.
+4. **Low coupling.** Modules share small plain types (`Point`, `StrokeShape`). Pure modules (`stroke`, `chalk`, `command`, `toolbar_layout`) never import `windows`; input, tray and toolbar know nothing about strokes.
 5. **Few dependencies.** Only `windows` and `windows-numerics`. Write it yourself if it fits in ~100 clear lines.
 6. **Safe `unsafe`.** Keep blocks tiny, add a `// SAFETY:` comment to each, release handles in `Drop`, no `unwrap()` at runtime.
 7. **Stay light.** Zero CPU when idle: redraw only on input. No per-frame allocations. Keep hook callbacks fast.

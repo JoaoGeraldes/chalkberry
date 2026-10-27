@@ -9,11 +9,25 @@ anything. Without Ctrl, the mouse works normally.
 | Draw | Hold **Ctrl** + click / drag |
 | Clear drawings | **Ctrl + Alt + C** |
 | Quit | **Ctrl + Alt + Q** |
-| Change colour, thickness, opacity | Click the chalkboard icon in the taskbar's notification area |
+| Change colour, thickness, opacity | Floating toolbar, or the chalkboard icon in the taskbar's notification area |
 
+### Floating toolbar
+
+A small dark bar appears at the top of the screen. Drag it by any empty spot
+(the dotted grip on the left is the obvious handle) to move it anywhere.
+
+| Button | What it does |
+|---|---|
+| Coloured dot | Opens a row of colours |
+| Grey dot | Opens a row of thicknesses (dots drawn at real size) |
+| Dot in a ring | Opens a row of opacities |
+| Bin | Clears the drawing |
+| Dash | Hides the toolbar; a notification says it is still in the tray |
+
+Bring a hidden toolbar back with **Show toolbar** in the tray icon's menu.
 New settings apply to the next strokes; lines already drawn keep their look.
-If the icon is not visible, it may be in the hidden-icons overflow (the **^**
-arrow); drag it onto the taskbar to keep it in view.
+If the tray icon is not visible, it may be in the hidden-icons overflow (the
+**^** arrow); drag it onto the taskbar to keep it in view.
 
 ## Requirements
 
