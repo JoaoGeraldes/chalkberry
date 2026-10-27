@@ -6,6 +6,45 @@ A tiny native Windows app for drawing on top of the screen. While it runs,
 **hold Ctrl and click or drag** to draw smooth, chalk-textured lines over
 anything. Without Ctrl, the mouse works normally.
 
+## Download
+
+**[Download the latest version](https://github.com/JoaoGeraldes/pen-marker-windows/releases/latest)** (Windows 10 or 11, 64-bit).
+
+On the release page, under **Assets**, pick one:
+
+- **`ChalkberrySetup-<version>.exe`**: the installer. Adds Chalkberry to the
+  Start menu and can start it with Windows. Recommended.
+- **`chalkberry-<version>-portable.exe`**: the app on its own, nothing to
+  install. Put it anywhere and double-click it.
+
+**"Windows protected your PC"?** The files are not code-signed, so Windows
+SmartScreen warns about new apps from unknown publishers. Click
+**More info → Run anyway**.
+
+**Check your download (optional).** Each release lists a SHA-256 checksum
+for every file. In PowerShell, run `Get-FileHash` on the file you downloaded
+and check that the hash matches the one on the release page:
+
+```powershell
+Get-FileHash .\ChalkberrySetup-0.1.0.exe
+```
+
+## Contents
+
+- [Download](#download)
+- [Using it](#using-it)
+  - [Floating toolbar](#floating-toolbar)
+  - [Tray icon](#tray-icon)
+  - [Screenshots](#screenshots)
+  - [Settings](#settings)
+- [Requirements](#requirements)
+- [Build the app](#build-the-app)
+  - [App icon](#app-icon)
+- [Make an installer](#make-an-installer)
+  - [Releasing a new version](#releasing-a-new-version)
+  - [Publishing on GitHub](#publishing-on-github)
+- [Develop](#develop)
+
 ## Using it
 
 | Action | Shortcut |
@@ -162,6 +201,63 @@ Running a newer setup upgrades the installed app in place: same folder, one
 entry in **Settings → Apps** showing the new version, and the user's
 settings kept. Inno Setup recognises the existing install by `AppId` in the
 script, so never change that line.
+
+### Publishing on GitHub
+
+Finished files are published as a **GitHub Release**, never committed to
+the repository (they would bloat its history forever; `installer/output/` is
+in `.gitignore` for this reason). The examples use version `0.2.0`.
+
+1. **Commit the version change** (both files from the section above) and
+   push it.
+
+2. **Tag that commit** with the version, starting with `v`:
+
+   ```powershell
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+3. **Prepare the files** next to the installer: copy the app as a portable
+   version, then get the checksums of both files.
+
+   ```powershell
+   Copy-Item target\release\chalkberry.exe installer\output\chalkberry-0.2.0-portable.exe
+   Get-FileHash installer\output\*0.2.0*.exe | Format-List Hash, Path
+   ```
+
+4. **Create the release.** On GitHub: **Releases → Draft a new release**,
+   choose the tag `v0.2.0`, and use `Chalkberry 0.2.0` as the title.
+
+5. **Write the notes.** Paste this and fill it in:
+
+   ```markdown
+   ## What's new
+   - …
+
+   ## Fixed
+   - …
+
+   ## Download
+   - **ChalkberrySetup-0.2.0.exe**: installer (recommended)
+   - **chalkberry-0.2.0-portable.exe**: no install needed
+
+   Windows may warn that the app is from an unknown publisher:
+   click **More info → Run anyway**.
+
+   ## SHA-256 checksums
+   - `ChalkberrySetup-0.2.0.exe`: `<hash>`
+   - `chalkberry-0.2.0-portable.exe`: `<hash>`
+   ```
+
+6. **Attach the files.** Drag `ChalkberrySetup-0.2.0.exe` and
+   `chalkberry-0.2.0-portable.exe` from `installer\output\` into the
+   assets box. GitHub adds the source code downloads by itself.
+
+7. **Publish**, then open the
+   [latest release link]({LATEST}) to check it shows the new
+   version. The README's Download link always points there, so it never
+   needs updating.
 
 ## Develop
 
