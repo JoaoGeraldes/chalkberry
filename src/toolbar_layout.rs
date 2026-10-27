@@ -126,6 +126,50 @@ pub enum ToolbarHit {
     Background,
 }
 
+/// A tooltip's bold first line and its plain explanation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooltipText {
+    pub title: &'static str,
+    pub body: &'static str,
+}
+
+/// What to say when the mouse rests on `hit`. Choices are named by their
+/// label in `config`; `open_picker` says which list they come from.
+pub fn tooltip_text(hit: ToolbarHit, open_picker: Option<Picker>) -> Option<TooltipText> {
+    let (title, body) = match hit {
+        ToolbarHit::Button(button) => button_tooltip(button),
+        ToolbarHit::Choice(index) => match open_picker? {
+            Picker::Color => (
+                COLOR_CHOICES.get(index)?.0,
+                "Draw new lines in this colour.",
+            ),
+            Picker::Width => (WIDTH_CHOICES.get(index)?.0, "Draw new lines this thick."),
+            Picker::Opacity => (
+                OPACITY_CHOICES.get(index)?.0,
+                "How see-through new lines are.",
+            ),
+        },
+        ToolbarHit::Background => return None,
+    };
+    Some(TooltipText { title, body })
+}
+
+fn button_tooltip(button: ToolbarButton) -> (&'static str, &'static str) {
+    match button {
+        ToolbarButton::Color => ("Colour", "Click to pick the chalk colour for new lines."),
+        ToolbarButton::Width => ("Thickness", "Click to pick how thick new lines are."),
+        ToolbarButton::Opacity => ("Opacity", "Click to pick how see-through new lines are."),
+        ToolbarButton::Clear => (
+            "Clear all",
+            "Erases everything you have drawn. Shortcut: Ctrl + Alt + C.",
+        ),
+        ToolbarButton::Hide => (
+            "Hide toolbar",
+            "Pen Marker keeps running. Bring the toolbar back from the tray icon.",
+        ),
+    }
+}
+
 /// The toolbar's layout for a given open picker (or none).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ToolbarLayout {
@@ -329,6 +373,33 @@ mod tests {
         let layout = ToolbarLayout::new(None);
         let (x, y) = layout.hint_rect().center();
         assert_eq!(layout.hit_test(x, y), ToolbarHit::Background);
+    }
+
+    #[test]
+    fn every_button_has_a_tooltip() {
+        for button in ToolbarButton::ALL {
+            let tooltip = tooltip_text(ToolbarHit::Button(button), None);
+            assert!(tooltip.is_some_and(|text| !text.title.is_empty() && !text.body.is_empty()));
+        }
+    }
+
+    #[test]
+    fn choice_tooltips_use_choice_labels() {
+        let tooltip = tooltip_text(ToolbarHit::Choice(1), Some(Picker::Color));
+        assert_eq!(tooltip.map(|text| text.title), Some(COLOR_CHOICES[1].0));
+        let tooltip = tooltip_text(ToolbarHit::Choice(0), Some(Picker::Opacity));
+        assert_eq!(tooltip.map(|text| text.title), Some(OPACITY_CHOICES[0].0));
+    }
+
+    #[test]
+    fn no_tooltip_for_background_or_missing_choice() {
+        assert_eq!(tooltip_text(ToolbarHit::Background, None), None);
+        assert_eq!(tooltip_text(ToolbarHit::Choice(0), None), None);
+        let past_last = WIDTH_CHOICES.len();
+        assert_eq!(
+            tooltip_text(ToolbarHit::Choice(past_last), Some(Picker::Width)),
+            None
+        );
     }
 
     #[test]

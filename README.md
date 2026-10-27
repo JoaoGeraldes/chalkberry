@@ -23,9 +23,14 @@ A small dark bar appears at the top of the screen. Drag it by any empty spot
 | Grey dot | Opens a row of thicknesses (dots drawn at real size) |
 | Dot in a ring | Opens a row of opacities |
 | Bin | Clears the drawing |
-| Dash | Hides the toolbar; a notification says it is still in the tray |
+| Dash | Hides the toolbar; a bubble points at the tray icon to show where it went |
 
-A small hint under the buttons reminds you how to draw and erase.
+A small hint under the buttons reminds you how to draw and erase. Rest the
+mouse on any button or choice for a tooltip explaining it.
+
+When the app starts, a bubble points at the toolbar for a few seconds so you
+know it is running. When you hide the toolbar, a bubble points at the tray
+icon to show where it went.
 
 Bring a hidden toolbar back with **Show toolbar** in the tray icon's menu.
 New settings apply to the next strokes; lines already drawn keep their look.

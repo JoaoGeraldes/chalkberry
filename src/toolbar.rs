@@ -1,6 +1,7 @@
 //! The small floating toolbar: drag it anywhere to move it, pick the pen
 //! colour, thickness and opacity, clear the drawing, or hide it. A short
-//! hint at the bottom explains how to draw and erase.
+//! hint at the bottom explains how to draw and erase, and resting the mouse
+//! on a button or choice shows a tooltip (drawn by `callout`).
 //!
 //! The toolbar only draws itself and posts [`WM_TOOLBAR_COMMAND`] to its
 //! owner (the overlay). It never changes pen settings or strokes directly.
@@ -30,19 +31,22 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, HTCAPTION, HTCLIENT, IDC_ARROW,
-    IsWindowVisible, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW,
-    SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
-    SetLayeredWindowAttributes, SetWindowPos, ShowWindow, WM_APP, WM_DESTROY, WM_DPICHANGED,
-    WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, GetWindowRect, HTCAPTION, HTCLIENT,
+    IDC_ARROW, IsWindowVisible, KillTimer, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostMessageW,
+    RegisterClassW, SM_CXSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOZORDER, SetLayeredWindowAttributes, SetTimer, SetWindowPos, ShowWindow, WM_APP,
+    WM_DESTROY, WM_DPICHANGED, WM_LBUTTONDOWN, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
+    WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Result, w};
 use windows_numerics::Vector2;
 
+use crate::callout::{self, CalloutKind};
+use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
-use crate::toolbar_layout::{Picker, Rect, ToolbarButton, ToolbarHit, ToolbarLayout};
+use crate::toolbar_layout::{Picker, Rect, ToolbarButton, ToolbarHit, ToolbarLayout, tooltip_text};
 
 /// Posted to the owner window when the user picks something on the
 /// toolbar. `wparam` is the [`Command::id`].
@@ -53,6 +57,10 @@ pub const WM_TOOLBAR_COMMAND: u32 = WM_APP + 3;
 /// exports it under `Win32_UI_Controls`, a feature we don't otherwise need.
 /// Value from `winuser.h`.
 const WM_MOUSELEAVE: u32 = 0x02A3;
+
+/// Resting the mouse this long on a button shows its tooltip.
+const TOOLTIP_DELAY_MS: u32 = 450;
+const TOOLTIP_TIMER_ID: usize = 1;
 
 /// Windows' reference DPI: at 96 DPI one DIP is one pixel.
 const BASE_DPI: f32 = 96.0;
@@ -123,9 +131,23 @@ impl Toolbar {
 
     /// Hides the toolbar, closing any open picker first.
     pub fn hide(&self) {
-        with_state(|state| state.set_layout(ToolbarLayout::new(None)));
+        with_state(|state| {
+            state.set_layout(ToolbarLayout::new(None));
+            state.cancel_tooltip();
+        });
         // SAFETY: plain Win32 call on our own valid window.
         let _ = unsafe { ShowWindow(self.window, SW_HIDE) };
+    }
+
+    /// Where the toolbar is on screen, in pixels.
+    pub fn screen_rect(&self) -> PixelRect {
+        window_screen_rect(self.window)
+    }
+
+    /// The scaling of the monitor the toolbar is on.
+    pub fn dpi(&self) -> u32 {
+        // SAFETY: plain Win32 call on our own valid window.
+        unsafe { GetDpiForWindow(self.window) }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -210,6 +232,7 @@ impl ToolbarState {
         if layout != self.layout {
             self.layout = layout;
             self.hovered = None;
+            self.cancel_tooltip();
             self.resize_window(None);
         }
     }
@@ -251,6 +274,7 @@ impl ToolbarState {
     }
 
     fn on_click(&mut self, x_px: i32, y_px: i32) {
+        self.cancel_tooltip();
         let (x, y) = self.to_dips(x_px, y_px);
         match self.layout.hit_test(x, y) {
             ToolbarHit::Button(button) => self.on_button_click(button),
@@ -307,6 +331,68 @@ impl ToolbarState {
         if hovered != self.hovered {
             self.hovered = hovered;
             self.request_redraw();
+            self.on_hover_changed();
+        }
+    }
+
+    /// A new button or choice is under the mouse (or none is).
+    fn on_hover_changed(&self) {
+        self.stop_tooltip_timer();
+        match self.hovered {
+            None => callout::hide_tooltip(),
+            // A tooltip is already up: follow the mouse right away.
+            Some(_) if callout::is_tooltip_visible() => self.show_tooltip(),
+            Some(_) => {
+                // SAFETY: plain Win32 call on our own valid window.
+                unsafe { SetTimer(Some(self.window), TOOLTIP_TIMER_ID, TOOLTIP_DELAY_MS, None) };
+            }
+        }
+    }
+
+    fn on_tooltip_timer(&mut self) {
+        self.stop_tooltip_timer();
+        self.show_tooltip();
+    }
+
+    /// Shows the tooltip for whatever is under the mouse.
+    fn show_tooltip(&self) {
+        let Some(hit) = self.hovered else {
+            return;
+        };
+        let rect = match hit {
+            ToolbarHit::Button(button) => Some(self.layout.button_rect(button)),
+            ToolbarHit::Choice(index) => self.layout.choice_rect(index),
+            ToolbarHit::Background => None,
+        };
+        let text = tooltip_text(hit, self.layout.open_picker);
+        if let (Some(rect), Some(text)) = (rect, text) {
+            let target = self.to_screen(rect);
+            let dpi = self.dpi as u32;
+            callout::show(text.title, text.body, target, dpi, CalloutKind::Tooltip);
+        }
+    }
+
+    fn cancel_tooltip(&self) {
+        self.stop_tooltip_timer();
+        callout::hide_tooltip();
+    }
+
+    fn stop_tooltip_timer(&self) {
+        // SAFETY: plain Win32 call; stopping a timer that is not running
+        // just fails harmlessly.
+        let _ = unsafe { KillTimer(Some(self.window), TOOLTIP_TIMER_ID) };
+    }
+
+    /// Converts a layout rectangle (DIPs) to screen pixels.
+    fn to_screen(&self, rect: Rect) -> PixelRect {
+        let origin = window_screen_rect(self.window);
+        let scale = self.dpi / BASE_DPI;
+        let to_px = |dips: f32| (dips * scale).round() as i32;
+        PixelRect {
+            left: origin.left + to_px(rect.left),
+            top: origin.top + to_px(rect.top),
+            right: origin.left + to_px(rect.right),
+            bottom: origin.top + to_px(rect.bottom),
         }
     }
 
@@ -328,6 +414,7 @@ impl ToolbarState {
 
     fn on_mouse_leave(&mut self) {
         self.is_tracking_mouse_leave = false;
+        self.cancel_tooltip();
         if self.hovered.take().is_some() {
             self.request_redraw();
         }
@@ -703,6 +790,9 @@ unsafe extern "system" fn window_proc(
         WM_LBUTTONDOWN => with_state(|state| state.on_click(x, y)).map(|()| LRESULT(0)),
         WM_MOUSEMOVE => with_state(|state| state.on_mouse_move(x, y)).map(|()| LRESULT(0)),
         WM_MOUSELEAVE => with_state(ToolbarState::on_mouse_leave).map(|()| LRESULT(0)),
+        WM_TIMER if wparam.0 == TOOLTIP_TIMER_ID => {
+            with_state(ToolbarState::on_tooltip_timer).map(|()| LRESULT(0))
+        }
         WM_PAINT => {
             let painted = with_state(ToolbarState::paint);
             // SAFETY: plain Win32 call; marks the window as painted.
@@ -726,6 +816,20 @@ unsafe extern "system" fn window_proc(
         Some(result) => result,
         // SAFETY: forwarding the unchanged arguments to the default handler.
         None => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// A window's position and size on screen, in pixels.
+fn window_screen_rect(window: HWND) -> PixelRect {
+    let mut rect = RECT::default();
+    // SAFETY: plain Win32 call; `rect` outlives it. On failure the rect
+    // stays empty, which only misplaces a tooltip.
+    let _ = unsafe { GetWindowRect(window, &mut rect) };
+    PixelRect {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
     }
 }
 

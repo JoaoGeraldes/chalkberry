@@ -282,7 +282,9 @@ impl Renderer {
     }
 }
 
-fn create_d3d_device() -> Result<ID3D11Device> {
+/// Creates a GPU device that Direct2D can draw with. Also used by
+/// `callout`, which needs the same transparent-window setup.
+pub(crate) fn create_d3d_device() -> Result<ID3D11Device> {
     let mut device = None;
     // SAFETY: `device` is a valid out-pointer for the duration of the call.
     unsafe {
@@ -302,7 +304,9 @@ fn create_d3d_device() -> Result<ID3D11Device> {
     device.ok_or_else(windows::core::Error::empty)
 }
 
-fn create_swap_chain(
+/// Creates a premultiplied-alpha swap chain for DirectComposition, so
+/// transparent pixels show the desktop. Also used by `callout`.
+pub(crate) fn create_swap_chain(
     dxgi_device: &IDXGIDevice,
     width: u32,
     height: u32,
@@ -363,7 +367,8 @@ fn create_chalk_brush(
     }
 }
 
-fn bitmap_properties(options: D2D1_BITMAP_OPTIONS) -> D2D1_BITMAP_PROPERTIES1 {
+/// Premultiplied BGRA at 96 DPI (1 DIP == 1 pixel). Also used by `callout`.
+pub(crate) fn bitmap_properties(options: D2D1_BITMAP_OPTIONS) -> D2D1_BITMAP_PROPERTIES1 {
     D2D1_BITMAP_PROPERTIES1 {
         pixelFormat: D2D1_PIXEL_FORMAT {
             format: DXGI_FORMAT_B8G8R8A8_UNORM,

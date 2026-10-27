@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{InvalidateRect, ValidateRect};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, RegisterHotKey, ReleaseCapture,
     SetCapture, VK_CONTROL,
@@ -20,15 +21,17 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GWL_EXSTYLE, GetSystemMetrics,
     GetWindowLongPtrW, IDC_CROSS, LWA_ALPHA, LoadCursorW, MA_NOACTIVATE, PostQuitMessage,
-    RegisterClassW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SW_SHOWNOACTIVATE, SetLayeredWindowAttributes, SetWindowLongPtrW, ShowWindow,
-    WM_CAPTURECHANGED, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    RegisterClassW, SM_CXSCREEN, SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SetLayeredWindowAttributes,
+    SetWindowLongPtrW, ShowWindow, WM_CAPTURECHANGED, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{Result, w};
 
+use crate::callout::{self, CalloutKind};
+use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{CLEAR_HOTKEY_LETTER, DEFAULT_PEN, PenSettings, QUIT_HOTKEY_LETTER};
 use crate::input::WM_CTRL_STATE_CHANGED;
@@ -37,8 +40,19 @@ use crate::stroke::{DrawnStroke, Point, Stroke, topmost_stroke_at};
 use crate::toolbar::{Toolbar, WM_TOOLBAR_COMMAND};
 use crate::tray::{self, TrayIcon, WM_TRAY_ICON};
 
-const TOOLBAR_HIDDEN_TITLE: &str = "Toolbar hidden";
-const TOOLBAR_HIDDEN_TEXT: &str = "Pen Marker is still running. Click its icon in the notification area to bring the toolbar back.";
+const READY_TITLE: &str = "Pen Marker is ready";
+const READY_TEXT: &str =
+    "Hold Ctrl and drag anywhere to draw. Your chalk settings are on this bar.";
+const READY_VISIBLE_MS: u32 = 5500;
+
+const STILL_RUNNING_TITLE: &str = "Pen Marker is still running";
+const STILL_RUNNING_TEXT: &str =
+    "The toolbar is hidden. Click the chalkboard icon here to bring it back.";
+const STILL_RUNNING_VISIBLE_MS: u32 = 6500;
+
+/// When Windows cannot say where the tray icon is, point at the screen's
+/// bottom-right corner, where the notification area usually is.
+const TRAY_FALLBACK_SIZE_PX: i32 = 40;
 
 const CLEAR_HOTKEY_ID: i32 = 1;
 const QUIT_HOTKEY_ID: i32 = 2;
@@ -58,6 +72,7 @@ pub fn create_overlay() -> Result<HWND> {
     let window = create_overlay_window()?;
     let (width, height) = virtual_screen_size();
     let renderer = Renderer::new(window, width, height, &DEFAULT_PEN)?;
+    callout::create(window)?;
     let toolbar = Toolbar::create(window, &DEFAULT_PEN)?;
     let tray_icon = TrayIcon::new(window)?;
     // Not fatal: right after login the taskbar may not exist yet. The icon
@@ -83,7 +98,10 @@ pub fn create_overlay() -> Result<HWND> {
     unsafe {
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
     }
-    with_state(|state| state.toolbar.show());
+    with_state(|state| {
+        state.toolbar.show();
+        state.point_out_toolbar();
+    });
     Ok(window)
 }
 
@@ -325,15 +343,30 @@ impl OverlayState {
         }
     }
 
-    /// Hidden from its own button, so tell the user where it went.
+    /// Hidden from its own button, so point at the tray icon to show
+    /// where it went.
     fn hide_toolbar_with_notice(&self) {
         self.toolbar.hide();
-        if let Err(error) = self
+        let target = self
             .tray_icon
-            .show_notice(TOOLBAR_HIDDEN_TITLE, TOOLBAR_HIDDEN_TEXT)
-        {
-            log_error("showing toolbar notice", &error);
-        }
+            .screen_rect()
+            .unwrap_or_else(primary_screen_corner);
+        // SAFETY: plain Win32 call with no pointers.
+        let dpi = unsafe { GetDpiForSystem() };
+        let kind = CalloutKind::Notice {
+            visible_ms: STILL_RUNNING_VISIBLE_MS,
+        };
+        callout::show(STILL_RUNNING_TITLE, STILL_RUNNING_TEXT, target, dpi, kind);
+    }
+
+    /// At start-up: briefly point at the toolbar, so it is clear the app is
+    /// running and where its controls are.
+    fn point_out_toolbar(&self) {
+        let kind = CalloutKind::Notice {
+            visible_ms: READY_VISIBLE_MS,
+        };
+        let target = self.toolbar.screen_rect();
+        callout::show(READY_TITLE, READY_TEXT, target, self.toolbar.dpi(), kind);
     }
 
     /// Puts the tray icon back after Explorer recreated the taskbar.
@@ -478,6 +511,18 @@ fn point_from_lparam(lparam: LPARAM) -> Point {
     let x = (lparam.0 & 0xFFFF) as u16 as i16;
     let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16;
     Point::new(f32::from(x), f32::from(y))
+}
+
+/// A small square in the primary screen's bottom-right corner.
+fn primary_screen_corner() -> PixelRect {
+    // SAFETY: plain Win32 calls with no pointers.
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    PixelRect {
+        left: width - TRAY_FALLBACK_SIZE_PX,
+        top: height - TRAY_FALLBACK_SIZE_PX,
+        right: width,
+        bottom: height,
+    }
 }
 
 /// The top-left corner of the area spanning all monitors. It can be

@@ -7,6 +7,8 @@
 // `eprintln!` messages are visible while developing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod callout;
+mod callout_placement;
 mod chalk;
 mod command;
 mod config;

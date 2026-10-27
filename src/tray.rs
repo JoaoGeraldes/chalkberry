@@ -1,8 +1,9 @@
 //! The notification-area (tray) icon and its settings menu.
 //!
 //! Clicking the icon opens a menu to pick the pen colour, thickness and
-//! opacity, show or hide the toolbar, clear the drawing, or quit. The icon
-//! can also pop up a short notice. This module only reports which
+//! opacity, show or hide the toolbar, clear the drawing, or quit. It can
+//! also say where the icon is, so a callout can point at it. This module
+//! only reports which
 //! [`Command`] was picked; applying it is the overlay's job. It never draws
 //! strokes or touches overlay state.
 
@@ -11,8 +12,8 @@ use std::cell::Cell;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
+    Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
@@ -23,6 +24,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
+use crate::callout_placement::PixelRect;
 use crate::command::Command;
 use crate::config::{COLOR_CHOICES, OPACITY_CHOICES, PenSettings, WIDTH_CHOICES};
 
@@ -73,16 +75,23 @@ impl TrayIcon {
         unsafe { Shell_NotifyIconW(NIM_ADD, &icon_data).ok() }
     }
 
-    /// Pops up a short notice next to the tray icon (shown by Windows as a
-    /// notification). Too-long text is cut off.
-    pub fn show_notice(&self, title: &str, text: &str) -> Result<()> {
-        let mut icon_data = self.icon_data();
-        icon_data.uFlags = NIF_INFO;
-        icon_data.dwInfoFlags = NIIF_INFO;
-        copy_wide_text(title, &mut icon_data.szInfoTitle);
-        copy_wide_text(text, &mut icon_data.szInfo);
-        // SAFETY: `icon_data` is fully initialised and outlives the call.
-        unsafe { Shell_NotifyIconW(NIM_MODIFY, &icon_data).ok() }
+    /// Where the icon is on screen, in pixels. `None` if Windows cannot
+    /// say, e.g. while the taskbar is restarting.
+    pub fn screen_rect(&self) -> Option<PixelRect> {
+        let identifier = NOTIFYICONIDENTIFIER {
+            cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
+            hWnd: self.window,
+            uID: TRAY_ICON_ID,
+            ..Default::default()
+        };
+        // SAFETY: `identifier` is fully initialised and outlives the call.
+        let rect = unsafe { Shell_NotifyIconGetRect(&identifier) }.ok()?;
+        Some(PixelRect {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        })
     }
 
     fn icon_data(&self) -> NOTIFYICONDATAW {
