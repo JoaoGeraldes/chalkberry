@@ -256,7 +256,7 @@ in `.gitignore` for this reason). The examples use version `0.2.0`.
    assets box. GitHub adds the source code downloads by itself.
 
 7. **Publish**, then open the
-   [latest release link]({LATEST}) to check it shows the new
+   [latest release link](https://github.com/JoaoGeraldes/chalkberry/releases/latest) to check it shows the new
    version. The README's Download link always points there, so it never
    needs updating.
 
