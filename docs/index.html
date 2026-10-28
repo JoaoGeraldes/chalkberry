@@ -11,13 +11,14 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="favicon.ico">
+  <link rel="preload" href="fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header class="nav">
   <div class="wrap nav-inner">
-    <a class="brand" href="#top"><img src="logo.svg" alt="" width="28" height="30"> Chalkberry</a>
+    <a class="brand" href="#top"><img src="logo.svg" alt="" width="36" height="38"> Chalkberry</a>
     <nav class="nav-links">
       <a href="#how">How it works</a>
       <a href="#features">Features</a>
@@ -52,7 +53,8 @@
   <!-- Problem -->
   <section class="problem">
     <div class="wrap narrow">
-      <h2>“No, the other button. Further down. Left a bit.”</h2>
+      <h2><span class="underline-light">“No, the other button. Further down. Left a bit.”</span></h2>
+      <img class="problem-logo" src="logo.svg" alt="" width="72" height="76">
       <p>Pointing with a mouse cursor on a shared screen is slow and easy to miss. Chalkberry lets you mark the exact spot, so people see what you mean the first time.</p>
     </div>
   </section>
@@ -92,9 +94,7 @@
           <p>Smooth chalk-style lines on top of every window, on every monitor. Pick from 8 colours, 5 thicknesses and 4 opacities, so you can highlight without hiding what’s underneath.</p>
         </div>
         <figure class="shot" data-file="images/draw.webm" style="aspect-ratio: 1332 / 754;">
-          <video autoplay muted loop playsinline aria-label="Drawing chalk lines in different colours over an app">
-            <source src="images/draw.webm" type="video/webm" onerror="this.parentNode.remove()">
-          </video>
+          <video muted loop playsinline preload="none" data-src="images/draw.webm" aria-label="Drawing chalk lines in different colours over an app"></video>
         </figure>
       </article>
 
@@ -104,9 +104,7 @@
           <p>Made a mistake? Hold Ctrl and right-click a line to remove just that one, or right-drag across several. Clear everything with one click on the bin.</p>
         </div>
         <figure class="shot" data-file="images/erase.webm" style="aspect-ratio: 1332 / 754;">
-          <video autoplay muted loop playsinline aria-label="Erasing a single chalk line with the crosshair cursor">
-            <source src="images/erase.webm" type="video/webm" onerror="this.parentNode.remove()">
-          </video>
+          <video muted loop playsinline preload="none" data-src="images/erase.webm" aria-label="Erasing a single chalk line with the crosshair cursor"></video>
         </figure>
       </article>
 
@@ -116,9 +114,7 @@
           <p>Drag it anywhere, or hide it. Every button explains itself when you rest the mouse on it. The same options are in the tray icon next to the clock.</p>
         </div>
         <figure class="shot" data-file="images/toolbar.webm" style="aspect-ratio: 1332 / 754;">
-          <video autoplay muted loop playsinline aria-label="The Chalkberry toolbar, with a tooltip explaining each button">
-            <source src="images/toolbar.webm" type="video/webm" onerror="this.parentNode.remove()">
-          </video>
+          <video muted loop playsinline preload="none" data-src="images/toolbar.webm" aria-label="The Chalkberry toolbar, with a tooltip explaining each button"></video>
         </figure>
       </article>
 
@@ -128,9 +124,7 @@
           <p>Click the camera to capture the screen with your notes on it. Drag a box to keep only part of it, then save it as a PNG to share in chat, email or a ticket.</p>
         </div>
         <figure class="shot" data-file="images/screenshot.webm" style="aspect-ratio: 1332 / 754;">
-          <video autoplay muted loop playsinline aria-label="Taking a screenshot with drawings, cropping part of the screen and saving it as a PNG">
-            <source src="images/screenshot.webm" type="video/webm" onerror="this.parentNode.remove()">
-          </video>
+          <video muted loop playsinline preload="none" data-src="images/screenshot.webm" aria-label="Taking a screenshot with drawings, cropping part of the screen and saving it as a PNG"></video>
         </figure>
       </article>
 
@@ -217,7 +211,7 @@
 
 <footer class="footer">
   <div class="wrap footer-inner">
-    <span><img src="logo.svg" alt="" width="18" height="19"> Chalkberry</span>
+    <span><img src="logo.svg" alt="" width="24" height="25"> Chalkberry</span>
     <nav>
       <a href="https://github.com/JoaoGeraldes/chalkberry">Source code</a>
       <a href="https://github.com/JoaoGeraldes/chalkberry/releases">All versions</a>
@@ -226,6 +220,26 @@
     </nav>
   </div>
 </footer>
+
+<script>
+  // Feature videos download only when scrolled near, and pause when off
+  // screen, so the page opens with just the hero video (~200 KB).
+  // The file is set here (not in the HTML) so nothing loads early.
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const video = entry.target;
+      if (!entry.isIntersecting) { video.pause(); continue; }
+      if (video.dataset.src) {
+        // A missing file shows the dashed placeholder instead.
+        video.addEventListener("error", () => video.remove());
+        video.src = video.dataset.src;
+        delete video.dataset.src;
+      }
+      video.play().catch(() => {});
+    }
+  }, { rootMargin: "300px 0px" });
+  document.querySelectorAll("video[data-src]").forEach((video) => observer.observe(video));
+</script>
 
 </body>
 </html>

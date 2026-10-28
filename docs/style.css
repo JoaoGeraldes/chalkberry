@@ -1,4 +1,24 @@
-/* Chalkberry landing page. Plain CSS, no build step, no external fonts. */
+/* Chalkberry landing page. Plain CSS, no build step, no external requests. */
+
+/* Archivo, self-hosted: Latin only, normal width, weights 400-700 (OFL, see fonts/OFL.txt). */
+@font-face {
+  font-family: "Archivo";
+  src: url("fonts/archivo-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Arial resized to match Archivo, shown while Archivo loads, so the text
+   doesn't jump when it swaps in. Same technique as Next.js's next/font. */
+@font-face {
+  font-family: "Archivo Fallback";
+  src: local("Arial");
+  size-adjust: 98.62%;
+  ascent-override: 89.03%;
+  descent-override: 21.29%;
+  line-gap-override: 0%;
+}
 
 :root {
   --berry: #cc241d;
@@ -19,7 +39,7 @@ html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  font-family: "Archivo", "Archivo Fallback", system-ui, sans-serif;
   font-size: 18px;
   line-height: 1.6;
   color: var(--ink);
@@ -109,11 +129,21 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
 }
 .shot img, .shot video { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; }
 .shot:has(img, video) { border-style: solid; border-color: transparent; }
+/* Hide the file name while a video is still loading. */
+.shot:has(img, video)::before { content: none; }
 .shot-hero { margin-top: 56px; }
 
 /* Problem */
 .problem { background: var(--board); color: #f3efe9; text-align: center; }
 .problem h2 { margin-bottom: 0.6em; }
+/* The same hand-drawn chalk stroke as the hero, in light chalk for the dark board. */
+.underline-light {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 20' preserveAspectRatio='none'%3E%3Cpath d='M3 14 C 80 4, 200 4, 297 11' stroke='%23f3efe9' stroke-width='4' fill='none' stroke-linecap='round' opacity='.35'/%3E%3C/svg%3E") bottom / 100% 0.25em no-repeat;
+  padding-bottom: 0.15em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.problem-logo { display: block; margin: 0 auto 24px; }
 .problem p { color: #c9c3bb; font-size: 1.15rem; }
 
 /* Steps */
