@@ -23,14 +23,38 @@
 :root {
   --berry: #cc241d;
   --berry-dark: #a51c16;
+  --radius: 14px;
+  --width: 1080px;
+}
+
+/* Dark theme (default): an old-school slate chalkboard with a fine grain. */
+:root {
+  color-scheme: dark;
+  --accent: #ef5b52;          /* red text and ticks, lifted to read on the board */
+  --ink: #ece8e1;             /* chalk white */
+  --muted: #a9b0aa;
+  --paper: #1f2522;           /* the board */
+  --card: rgba(255, 255, 255, 0.035);
+  --line: rgba(255, 255, 255, 0.12);
+  --board: #161b19;
+  --nav: rgba(31, 37, 34, 0.88);
+  --shadow: rgba(0, 0, 0, 0.5);
+  --noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Light theme: chosen when the system is set to light, or with the switch. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --accent: #cc241d;
   --ink: #1f1d1b;
   --muted: #5f5a55;
   --paper: #fbf8f4;
   --card: #ffffff;
   --line: #e7e1d9;
   --board: #23272a;
-  --radius: 14px;
-  --width: 1080px;
+  --nav: rgba(251, 248, 244, 0.9);
+  --shadow: rgba(31, 29, 27, 0.25);
+  --noise: none;
 }
 
 * { box-sizing: border-box; }
@@ -43,7 +67,7 @@ body {
   font-size: 18px;
   line-height: 1.6;
   color: var(--ink);
-  background: var(--paper);
+  background: var(--noise), var(--paper);
 }
 
 h1, h2, h3 { line-height: 1.2; margin: 0 0 0.5em; }
@@ -51,7 +75,7 @@ h1 { font-size: clamp(2.4rem, 6vw, 4rem); letter-spacing: -0.02em; }
 h2 { font-size: clamp(1.7rem, 3.5vw, 2.4rem); letter-spacing: -0.01em; }
 h3 { font-size: 1.2rem; }
 p { margin: 0 0 1em; }
-a { color: var(--berry); }
+a { color: var(--accent); }
 
 .wrap { max-width: var(--width); margin: 0 auto; padding: 0 24px; }
 .narrow { max-width: 720px; }
@@ -84,7 +108,7 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
   position: sticky;
   top: 0;
   z-index: 10;
-  background: rgba(251, 248, 244, 0.9);
+  background: var(--nav);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
@@ -94,6 +118,26 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
 .nav-links a:not(.button) { color: var(--muted); text-decoration: none; font-size: 0.95rem; }
 .nav-links a:not(.button):hover { color: var(--ink); }
 
+/* Theme switch: a moon in the dark theme, a sun in the light one. */
+.theme-switch {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.theme-switch:hover { background: var(--card); }
+.theme-switch:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.theme-switch svg { width: 18px; height: 18px; }
+.icon-sun { display: none; }
+:root[data-theme="light"] .icon-sun { display: block; }
+:root[data-theme="light"] .icon-moon { display: none; }
+
 /* Hero */
 .hero { text-align: center; padding-top: 80px; }
 .lead { font-size: 1.25rem; color: var(--muted); max-width: 640px; margin: 0 auto 1.6em; }
@@ -102,7 +146,7 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
 
 /* A hand-drawn chalk underline, in the app's own spirit */
 .underline {
-  color: var(--berry);
+  color: var(--accent);
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 20' preserveAspectRatio='none'%3E%3Cpath d='M3 14 C 80 4, 200 4, 297 11' stroke='%23cc241d' stroke-width='5' fill='none' stroke-linecap='round' opacity='.55'/%3E%3C/svg%3E") bottom / 100% 0.3em no-repeat;
   padding-bottom: 0.12em;
 }
@@ -116,7 +160,7 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
   overflow: hidden;
   background: var(--card);
   border: 2px dashed var(--line);
-  box-shadow: 0 20px 50px -20px rgba(31, 29, 27, 0.25);
+  box-shadow: 0 20px 50px -20px var(--shadow);
 }
 .shot::before {
   content: "Screenshot: " attr(data-file);
@@ -134,7 +178,7 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
 .shot-hero { margin-top: 56px; }
 
 /* Problem */
-.problem { background: var(--board); color: #f3efe9; text-align: center; }
+.problem { background: var(--noise), var(--board); color: #f3efe9; text-align: center; }
 .problem h2 { margin-bottom: 0.6em; }
 /* The same hand-drawn chalk stroke as the hero, in light chalk for the dark board. */
 .underline-light {
@@ -170,7 +214,7 @@ section h2 { text-align: center; margin-bottom: 1.2em; }
 .feature-text p { color: var(--muted); }
 .extras { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px 40px; }
 .extras li { padding-left: 28px; position: relative; color: var(--muted); }
-.extras li::before { content: "✓"; position: absolute; left: 0; color: var(--berry); font-weight: 700; }
+.extras li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
 .extras strong { color: var(--ink); }
 
 /* Use cases */
@@ -200,7 +244,7 @@ kbd {
 details { border-bottom: 1px solid var(--line); padding: 18px 0; }
 summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
 summary::-webkit-details-marker { display: none; }
-summary::after { content: "+"; color: var(--berry); font-size: 1.4rem; line-height: 1; }
+summary::after { content: "+"; color: var(--accent); font-size: 1.4rem; line-height: 1; }
 details[open] summary::after { content: "−"; }
 details p { color: var(--muted); margin: 12px 0 0; }
 code { font-size: 0.9em; background: var(--paper); padding: 1px 6px; border-radius: 4px; }
