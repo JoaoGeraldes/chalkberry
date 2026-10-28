@@ -8,7 +8,7 @@ anything. Without Ctrl, the mouse works normally.
 
 ## Download
 
-**[Download the latest version](https://github.com/JoaoGeraldes/pen-marker-windows/releases/latest)** (Windows 10 or 11, 64-bit).
+**[Download the latest version](https://github.com/JoaoGeraldes/chalkberry/releases/latest)** (Windows 10 or 11, 64-bit).
 
 On the release page, under **Assets**, pick one:
 
@@ -44,6 +44,7 @@ Get-FileHash .\ChalkberrySetup-0.1.0.exe
   - [Releasing a new version](#releasing-a-new-version)
   - [Publishing on GitHub](#publishing-on-github)
 - [Develop](#develop)
+- [License](#license)
 
 ## Using it
 
@@ -272,3 +273,21 @@ cargo test
 - Code rules and the module map are in [`CLAUDE.md`](CLAUDE.md).
 - The menu's colour, thickness and opacity choices, the startup pen, and the
   hotkeys live in [`src/settings/config.rs`](src/settings/config.rs).
+
+## License
+
+Copyright © 2026 João Geraldes
+
+Chalkberry is free and open-source software, licensed under the
+[GNU General Public License, version 3 or any later version](LICENSE)
+(`GPL-3.0-or-later`). You can use it for anything, including at work and
+commercially, and study, change and share the code. If you share a changed
+version, it must stay under the GPL and come with its source code.
+
+Contributors keep the copyright in their own contributions unless agreed
+otherwise.
+
+**Name and logo.** As allowed by section 7(e) of the GPL, the license grants
+no rights to the Chalkberry name or logo. Forks are welcome and may say they
+are "based on Chalkberry", but must use their own name and logo and must not
+look like official Chalkberry releases. See [`TRADEMARKS.md`](TRADEMARKS.md).

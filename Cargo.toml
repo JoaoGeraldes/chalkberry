@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Chalkberry: hold Ctrl and click/drag to draw on top of the Windows screen."
 publish = false
+license = "GPL-3.0-or-later"
 
 [dependencies]
 # Vector2 is the point type Direct2D uses; part of the same windows-rs family.

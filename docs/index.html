@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chalkberry: draw on your Windows screen. Just hold Ctrl.</title>
+  <meta name="description" content="Circle, underline and point at anything on your Windows screen during calls, demos and lessons. Hold Ctrl and drag to draw. Let go and your mouse works as normal.">
+  <meta property="og:title" content="Chalkberry: draw on your Windows screen">
+  <meta property="og:description" content="Hold Ctrl and drag to draw on top of anything. Let go and your mouse works as normal.">
+  <meta property="og:image" content="https://joaogeraldes.github.io/chalkberry/images/social.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top"><img src="logo.svg" alt="" width="28" height="30"> Chalkberry</a>
+    <nav class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#faq">FAQ</a>
+      <a class="button button-small" href="https://github.com/JoaoGeraldes/chalkberry/releases/latest"><img class="button-icon" src="images/windows.icon.svg" alt="" width="16" height="16"> Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- Hero: what it is, who it's for, one action -->
+  <section class="hero">
+    <div class="wrap">
+      <h1>Draw on your screen.<br><span class="underline">Just hold Ctrl.</span></h1>
+      <p class="lead">Circle, underline and point at anything on your Windows screen, during a call, a demo or a lesson. Let go of Ctrl and your mouse works as normal.</p>
+      <div class="cta">
+        <a class="button" href="https://github.com/JoaoGeraldes/chalkberry/releases/latest"><img class="button-icon" src="images/windows.icon.svg" alt="" width="16" height="16"> Download for Windows</a>
+        <a class="button button-ghost" href="#how">See how it works</a>
+      </div>
+      <p class="fine">Free · Windows 10 and 11 · Under 1 MB · No account needed</p>
+      <figure class="shot shot-hero" data-file="images/hero.webm" style="aspect-ratio: 1116 / 598;">
+        <!-- Muted + playsinline are required for autoplay. The figure's
+             aspect-ratio matches the video's size so nothing is cropped. -->
+        <video autoplay muted loop playsinline preload="auto" aria-label="Chalkberry in use: holding Ctrl and drawing chalk lines on top of a Windows desktop">
+          <source src="images/hero.webm" type="video/webm" onerror="this.parentNode.remove()">
+        </video>
+      </figure>
+    </div>
+  </section>
+
+  <!-- Problem -->
+  <section class="problem">
+    <div class="wrap narrow">
+      <h2>“No, the other button. Further down. Left a bit.”</h2>
+      <p>Pointing with a mouse cursor on a shared screen is slow and easy to miss. Chalkberry lets you mark the exact spot, so people see what you mean the first time.</p>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section id="how" class="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li>
+          <span class="step-number">1</span>
+          <h3>Download and open</h3>
+          <p>Run the installer, or the portable file if you don’t want to install anything. A small toolbar appears at the top of your screen.</p>
+        </li>
+        <li>
+          <span class="step-number">2</span>
+          <h3>Hold Ctrl and drag</h3>
+          <p>Draw over any app, website or video. The cursor turns into a pen so you always know you’re drawing.</p>
+        </li>
+        <li>
+          <span class="step-number">3</span>
+          <h3>Let go and keep working</h3>
+          <p>Your drawings stay while you click and type as usual. Press <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd> to clear them.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Features with screenshots -->
+  <section id="features" class="features">
+    <div class="wrap">
+      <h2>Everything you need, nothing you don’t</h2>
+
+      <article class="feature">
+        <div class="feature-text">
+          <h3>Draw over anything</h3>
+          <p>Smooth chalk-style lines on top of every window, on every monitor. Pick from 8 colours, 5 thicknesses and 4 opacities, so you can highlight without hiding what’s underneath.</p>
+        </div>
+        <figure class="shot" data-file="images/draw.webm" style="aspect-ratio: 1332 / 754;">
+          <video autoplay muted loop playsinline aria-label="Drawing chalk lines in different colours over an app">
+            <source src="images/draw.webm" type="video/webm" onerror="this.parentNode.remove()">
+          </video>
+        </figure>
+      </article>
+
+      <article class="feature">
+        <div class="feature-text">
+          <h3>Erase one line, or all of them</h3>
+          <p>Made a mistake? Hold Ctrl and right-click a line to remove just that one, or right-drag across several. Clear everything with one click on the bin.</p>
+        </div>
+        <figure class="shot" data-file="images/erase.webm" style="aspect-ratio: 1332 / 754;">
+          <video autoplay muted loop playsinline aria-label="Erasing a single chalk line with the crosshair cursor">
+            <source src="images/erase.webm" type="video/webm" onerror="this.parentNode.remove()">
+          </video>
+        </figure>
+      </article>
+
+      <article class="feature">
+        <div class="feature-text">
+          <h3>A toolbar that stays out of the way</h3>
+          <p>Drag it anywhere, or hide it. Every button explains itself when you rest the mouse on it. The same options are in the tray icon next to the clock.</p>
+        </div>
+        <figure class="shot" data-file="images/toolbar.webm" style="aspect-ratio: 1332 / 754;">
+          <video autoplay muted loop playsinline aria-label="The Chalkberry toolbar, with a tooltip explaining each button">
+            <source src="images/toolbar.webm" type="video/webm" onerror="this.parentNode.remove()">
+          </video>
+        </figure>
+      </article>
+
+      <article class="feature">
+        <div class="feature-text">
+          <h3>Screenshot your drawings</h3>
+          <p>Click the camera to capture the screen with your notes on it. Drag a box to keep only part of it, then save it as a PNG to share in chat, email or a ticket.</p>
+        </div>
+        <figure class="shot" data-file="images/screenshot.webm" style="aspect-ratio: 1332 / 754;">
+          <video autoplay muted loop playsinline aria-label="Taking a screenshot with drawings, cropping part of the screen and saving it as a PNG">
+            <source src="images/screenshot.webm" type="video/webm" onerror="this.parentNode.remove()">
+          </video>
+        </figure>
+      </article>
+
+      <ul class="extras">
+        <li><strong>Remembers your choices.</strong> Colour, thickness, toolbar spot and save folder are kept for next time.</li>
+        <li><strong>Light on your computer.</strong> Uses no processor power while you’re not drawing.</li>
+        <li><strong>No account, no internet.</strong> Nothing to sign up for. It runs entirely on your PC.</li>
+        <li><strong>Easy to remove.</strong> Uninstall from Windows Settings like any other app.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Use cases -->
+  <section class="uses">
+    <div class="wrap">
+      <h2>Made for showing, not telling</h2>
+      <div class="use-grid">
+        <div><h3>Presenting</h3><p>Point at the number that matters on a slide or dashboard.</p></div>
+        <div><h3>Teaching</h3><p>Walk through a diagram or a form step by step.</p></div>
+        <div><h3>Reviewing work</h3><p>Mark up a design, a document or code during a call.</p></div>
+        <div><h3>Helping someone</h3><p>Show exactly where to click, without taking over their screen.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Shortcuts -->
+  <section class="shortcuts">
+    <div class="wrap narrow">
+      <h2>Four shortcuts. That’s it.</h2>
+      <table>
+        <tr><td>Draw</td><td><kbd>Ctrl</kbd> + drag</td></tr>
+        <tr><td>Erase a line</td><td><kbd>Ctrl</kbd> + right-click</td></tr>
+        <tr><td>Clear everything</td><td><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>C</kbd></td></tr>
+        <tr><td>Quit</td><td><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Q</kbd></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- FAQ: answer the objections that stop a download -->
+  <section id="faq" class="faq">
+    <div class="wrap narrow">
+      <h2>Questions</h2>
+      <details>
+        <summary>Is it free?</summary>
+        <p>Yes, for everyone, at home or at work. No trial, no ads, no account. It’s open source under the <a href="https://github.com/JoaoGeraldes/chalkberry/blob/main/LICENSE">GPL-3.0 license</a>, so anyone can read and check the code.</p>
+      </details>
+      <details>
+        <summary>Windows says “Windows protected your PC”. Is it safe?</summary>
+        <p>Windows shows this for new apps that aren’t signed with a paid certificate. Click <strong>More info</strong>, then <strong>Run anyway</strong>. The source code is public on GitHub, and every release lists a checksum so you can check your download matches.</p>
+      </details>
+      <details>
+        <summary>Installer or portable: which one should I pick?</summary>
+        <p>The installer (<code>ChalkberrySetup</code>) adds Chalkberry to the Start menu and can start it with Windows. The portable file runs without installing: put it anywhere and double-click it.</p>
+      </details>
+      <details>
+        <summary>Does it work with more than one monitor?</summary>
+        <p>Yes. You can draw on all of them, and screenshots capture all of them.</p>
+      </details>
+      <details>
+        <summary>Will it slow down my computer?</summary>
+        <p>No. It’s a small native Windows app and does nothing while you aren’t drawing.</p>
+      </details>
+      <details>
+        <summary>Will people on my call see the drawings?</summary>
+        <p>Yes, when you share your whole screen. The drawings are on top of everything, so screen sharing picks them up.</p>
+      </details>
+      <details>
+        <summary>Does it work on Mac or Linux?</summary>
+        <p>No, Chalkberry is made for Windows 10 and 11 only.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- Final call to action -->
+  <section class="final">
+    <div class="wrap narrow">
+      <h2>Stop describing. Start pointing.</h2>
+      <a class="button" href="https://github.com/JoaoGeraldes/chalkberry/releases/latest"><img class="button-icon" src="images/windows.icon.svg" alt="" width="16" height="16"> Download Chalkberry</a>
+      <p class="fine">Free · Windows 10 and 11 · Under 1 MB</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span><img src="logo.svg" alt="" width="18" height="19"> Chalkberry</span>
+    <nav>
+      <a href="https://github.com/JoaoGeraldes/chalkberry">Source code</a>
+      <a href="https://github.com/JoaoGeraldes/chalkberry/releases">All versions</a>
+      <a href="https://github.com/JoaoGeraldes/chalkberry/issues">Report a problem</a>
+      <a href="https://github.com/JoaoGeraldes/chalkberry/blob/main/LICENSE">License</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
